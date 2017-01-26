@@ -510,7 +510,8 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, CS, hu, hv)
     ! Calculate viscosity for the main model to use
     if (CS%viscosity_coeff/=0.) then
 !aja: should make range jsq:jeq, isq:ieq
-      do j=js-1,je+1 ; do i=is-1,ie+1
+      !!!do j=js-1,je+1 ; do i=is-1,ie+1    !!! COMMENTED BY SK
+        do j=jsq,jeq ; do i=isq,ieq          !!! AADED BY SK
         MEKE%Ku(i,j) = CS%viscosity_coeff*sqrt(2.*max(0.,MEKE%MEKE(i,j)))*LmixScale(i,j)
       enddo ; enddo
       call cpu_clock_begin(CS%id_clock_pass)
