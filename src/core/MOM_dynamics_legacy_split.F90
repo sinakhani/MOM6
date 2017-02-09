@@ -66,7 +66,6 @@ module MOM_dynamics_legacy_split
 !********+*********+*********+*********+*********+*********+*********+**
 
 
-use MOM_open_boundary, only : ocean_OBC_type
 use MOM_variables, only : vertvisc_type, thermo_var_ptrs
 use MOM_variables, only : BT_cont_type, alloc_bt_cont_type, dealloc_bt_cont_type
 use MOM_variables, only : accel_diag_ptrs, ocean_internal_state, cont_diag_ptrs
@@ -79,7 +78,7 @@ use MOM_cpu_clock, only : CLOCK_MODULE_DRIVER, CLOCK_MODULE, CLOCK_ROUTINE
 use MOM_diag_mediator, only : diag_mediator_init, enable_averaging
 use MOM_diag_mediator, only : disable_averaging, post_data, safe_alloc_ptr
 use MOM_diag_mediator, only : register_diag_field, register_static_field
-use MOM_diag_mediator, only : set_diag_mediator_grid, diag_ctrl, diag_update_target_grids
+use MOM_diag_mediator, only : set_diag_mediator_grid, diag_ctrl, diag_update_remap_grids
 use MOM_domains, only : MOM_domains_init, pass_var, pass_vector
 use MOM_domains, only : pass_var_start, pass_var_complete
 use MOM_domains, only : pass_vector_start, pass_vector_complete
@@ -110,7 +109,9 @@ use MOM_hor_visc, only : horizontal_viscosity, hor_visc_init, hor_visc_CS
 use MOM_interface_heights, only : find_eta
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types, only : MEKE_type
-use MOM_open_boundary, only : Radiation_Open_Bdry_Conds
+use MOM_open_boundary, only : ocean_OBC_type
+use MOM_open_boundary, only : radiation_open_bdry_conds
+use MOM_boundary_update, only : update_OBC_data
 use MOM_PressureForce, only : PressureForce, PressureForce_init, PressureForce_CS
 use MOM_tidal_forcing, only : tidal_forcing_init, tidal_forcing_CS
 use MOM_vert_friction, only : vertvisc, vertvisc_coef, vertvisc_remnant
@@ -495,9 +496,13 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
     call cpu_clock_end(id_clock_pass)
   endif
 
+  if (associated(CS%OBC)) then; if (CS%OBC%update_OBC) then
+    call update_OBC_data(CS%OBC, G, h, Time_local)
+  endif; endif
+
 ! CAu = -(f+zeta_av)/h_av vh + d/dx KE_av
   call cpu_clock_begin(id_clock_Cor)
-  call CorAdCalc(u_av, v_av, h_av, uh, vh, CS%CAu, CS%CAv, CS%ADp, G, GV, &
+  call CorAdCalc(u_av, v_av, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, G, GV, &
                  CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
 
@@ -736,7 +741,7 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
   call cpu_clock_end(id_clock_pass)
 
   if (associated(CS%OBC)) then
-    call Radiation_Open_Bdry_Conds(CS%OBC, u_av, u_old_rad_OBC, v_av, &
+    call radiation_open_bdry_conds(CS%OBC, u_av, u_old_rad_OBC, v_av, &
              v_old_rad_OBC, hp, h_old_rad_OBC, G)
   endif
 
@@ -784,6 +789,10 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
     call cpu_clock_end(id_clock_pass)
   endif
 
+  if (associated(CS%OBC)) then; if (CS%OBC%update_OBC) then
+    call update_OBC_data(CS%OBC, G, h, Time_local)
+  endif; endif
+
   if (BT_cont_BT_thick) then
     call cpu_clock_begin(id_clock_pass)
     call pass_vector(CS%BT_cont%h_u, CS%BT_cont%h_v, G%Domain, &
@@ -810,7 +819,7 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
 
 ! CAu = -(f+zeta_av)/h_av vh + d/dx KE_av
   call cpu_clock_begin(id_clock_Cor)
-  call CorAdCalc(u_av, v_av, h_av, uh, vh, CS%CAu, CS%CAv, CS%ADp, G, GV, &
+  call CorAdCalc(u_av, v_av, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, G, GV, &
                  CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
 
@@ -937,7 +946,7 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
     call cpu_clock_end(id_clock_continuity)
     ! Whenever thickness changes let the diag manager know, target grids
     ! for vertical remapping may need to be regenerated.
-    call diag_update_target_grids(CS%diag)
+    call diag_update_remap_grids(CS%diag)
     if (G%nonblocking_updates) then
       call cpu_clock_begin(id_clock_pass)
       pid_h = pass_var_start(h, G%Domain)
@@ -978,7 +987,7 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
     call cpu_clock_end(id_clock_continuity)
     ! Whenever thickness changes let the diag manager know, target grids
     ! for vertical remapping may need to be regenerated.
-    call diag_update_target_grids(CS%diag)
+    call diag_update_remap_grids(CS%diag)
     call cpu_clock_begin(id_clock_pass)
     call pass_var(h, G%Domain)
     call cpu_clock_end(id_clock_pass)
@@ -995,7 +1004,7 @@ subroutine step_MOM_dyn_legacy_split(u, v, h, tv, visc, &
   call cpu_clock_end(id_clock_pass)
 
   if (associated(CS%OBC)) then
-    call Radiation_Open_Bdry_Conds(CS%OBC, u, u_old_rad_OBC, v, &
+    call radiation_open_bdry_conds(CS%OBC, u, u_old_rad_OBC, v, &
              v_old_rad_OBC, h, h_old_rad_OBC, G)
   endif
 
@@ -1304,7 +1313,7 @@ subroutine initialize_dyn_legacy_split(u, v, h, uh, vh, eta, Time, G, GV, param_
                  "BE is also applicable if SPLIT is false and USE_RK2 \n"//&
                  "is true.", units="nondim", default=0.6)
   call get_param(param_file, mod, "BEGW", CS%begw, &
-                 "If SPILT is true, BEGW is a number from 0 to 1 that \n"//&
+                 "If SPLIT is true, BEGW is a number from 0 to 1 that \n"//&
                  "controls the extent to which the treatment of gravity \n"//&
                  "waves is forward-backward (0) or simulated backward \n"//&
                  "Euler (1).  0 is almost always used.\n"//&

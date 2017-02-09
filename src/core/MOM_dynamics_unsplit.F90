@@ -78,7 +78,7 @@ use MOM_cpu_clock, only : CLOCK_MODULE_DRIVER, CLOCK_MODULE, CLOCK_ROUTINE
 use MOM_diag_mediator, only : diag_mediator_init, enable_averaging
 use MOM_diag_mediator, only : disable_averaging, post_data, safe_alloc_ptr
 use MOM_diag_mediator, only : register_diag_field, register_static_field
-use MOM_diag_mediator, only : set_diag_mediator_grid, diag_ctrl, diag_update_target_grids
+use MOM_diag_mediator, only : set_diag_mediator_grid, diag_ctrl, diag_update_remap_grids
 use MOM_domains, only : MOM_domains_init, pass_var, pass_vector
 use MOM_domains, only : pass_var_start, pass_var_complete
 use MOM_domains, only : pass_vector_start, pass_vector_complete
@@ -103,7 +103,8 @@ use MOM_interface_heights, only : find_eta
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types, only : MEKE_type
 use MOM_open_boundary, only : ocean_OBC_type
-use MOM_open_boundary, only : Radiation_Open_Bdry_Conds
+use MOM_open_boundary, only : radiation_open_bdry_conds
+use MOM_boundary_update, only : update_OBC_data
 use MOM_PressureForce, only : PressureForce, PressureForce_init, PressureForce_CS
 use MOM_set_visc, only : set_viscous_BBL, set_viscous_ML, set_visc_CS
 use MOM_tidal_forcing, only : tidal_forcing_init, tidal_forcing_CS
@@ -312,8 +313,8 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
 
 ! CAu = -(f+zeta)/h_av vh + d/dx KE
   call cpu_clock_begin(id_clock_Cor)
-  call CorAdCalc(u, v, h_av, uh, vh, CS%CAu, CS%CAv, CS%ADp, G, GV, &
-                 CS%CoriolisAdv_CSp)
+  call CorAdCalc(u, v, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
+                 G, GV, CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
 
 ! PFu = d/dx M(h_av,T,S)
@@ -324,6 +325,10 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
+
+  if (associated(CS%OBC)) then; if (CS%OBC%update_OBC) then
+    call update_OBC_data(CS%OBC, G, h, Time_local)
+  endif; endif
 
 ! up = u + dt_pred * (PFu + CAu)
   call cpu_clock_begin(id_clock_mom_update)
@@ -395,7 +400,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
 
 ! CAu = -(f+zeta(up))/h_av vh + d/dx KE(up)
   call cpu_clock_begin(id_clock_Cor)
-  call CorAdCalc(up, vp, h_av, uh, vh, CS%CAu, CS%CAv, CS%ADp, &
+  call CorAdCalc(up, vp, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
                  G, GV, CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
 
@@ -407,6 +412,10 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
+
+  if (associated(CS%OBC)) then; if (CS%OBC%update_OBC) then
+    call update_OBC_data(CS%OBC, G, h, Time_local)
+  endif; endif
 
 ! upp = u + dt/2 * ( PFu + CAu )
   call cpu_clock_begin(id_clock_mom_update)
@@ -448,7 +457,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
   call cpu_clock_end(id_clock_pass)
   ! Whenever thickness changes let the diag manager know, target grids
   ! for vertical remapping may need to be regenerated.
-  call diag_update_target_grids(CS%diag)
+  call diag_update_remap_grids(CS%diag)
 
   call enable_averaging(0.5*dt, Time_local, CS%diag)
 !   Here the second half of the thickness fluxes are offered for averaging.
@@ -472,7 +481,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
   call cpu_clock_begin(id_clock_Cor)
-  call CorAdCalc(upp, vpp, h_av, uh, vh, CS%CAu, CS%CAv, CS%ADp, &
+  call CorAdCalc(upp, vpp, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
                  G, GV, CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
 
@@ -481,6 +490,10 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, fluxes, &
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
+
+  if (associated(CS%OBC)) then; if (CS%OBC%update_OBC) then
+    call update_OBC_data(CS%OBC, G, h, Time_local)
+  endif; endif
 
 ! u = u + dt * ( PFu + CAu )
   do k=1,nz ; do j=js,je ; do I=Isq,Ieq
@@ -682,9 +695,9 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, param_file, diag, CS, &
 
   flux_units = get_flux_units(GV)
   CS%id_uh = register_diag_field('ocean_model', 'uh', diag%axesCuL, Time, &
-      'Zonal Thickness Flux', flux_units)
+      'Zonal Thickness Flux', flux_units, y_cell_method='sum', v_extensive=.true.)
   CS%id_vh = register_diag_field('ocean_model', 'vh', diag%axesCvL, Time, &
-      'Meridional Thickness Flux', flux_units)
+      'Meridional Thickness Flux', flux_units, x_cell_method='sum', v_extensive=.true.)
   CS%id_CAu = register_diag_field('ocean_model', 'CAu', diag%axesCuL, Time, &
       'Zonal Coriolis and Advective Acceleration', 'meter second-2')
   CS%id_CAv = register_diag_field('ocean_model', 'CAv', diag%axesCvL, Time, &
