@@ -74,8 +74,6 @@ use MOM_forcing_type, only : forcing
 use MOM_grid, only : ocean_grid_type
 use MOM_variables, only : thermo_var_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
-use CVmix_kpp, only : cvmix_kpp_efactor_model  
-use CVmix_kinds_and_types, only : cvmix_global_params_type
 ! use MOM_EOS, only : calculate_density, calculate_density_derivs
 
 implicit none ; private
@@ -144,6 +142,10 @@ type, public :: energetic_PBL_CS ; private
                              ! applies to in subsequent revisions of this code.
                              ! "_Neg" and "_Pos" refer to which scale is applied as a
                              ! function of negative or positive local buoyancy.
+  real    :: MSTAR_CAP       ! Since MSTAR is restoring undissipated energy to mixing,
+                             ! there must be a cap on how large it can be.  This
+                             ! is definitely a function of latitude (Ekman limit),
+                             ! but will be taken as constant for now.
   real    :: MSTAR_SLOPE     ! Slope of the function which relates the shear production
                              ! to the mixing layer depth, Ekman depth, and Monin-Obukhov
                              ! depth.
@@ -151,10 +153,13 @@ type, public :: energetic_PBL_CS ; private
                              ! to decay toward MSTAR->0 at fully developed Ekman depth.
   real    :: MSTAR_AT_XINT   ! Intercept value of MSTAR at value where function
                              ! changes to linear transition.
+  real    :: LT_ENHANCE_COEF ! Coefficient in fit for Langmuir Enhancment
+  real    :: LT_ENHANCE_EXP  ! Exponent in fit for Langmuir Enhancement
   type(time_type), pointer :: Time ! A pointer to the ocean model's clock.
+  integer :: LT_Enhance_Form = 0 ! Option for Langmuir enhancement function
   logical :: Use_Mstar_Fixed = .true. ! A logical to revert to a fixed m*
   logical :: TKE_diagnostics = .false.
-  logical :: Use_LT_LiFunction = .false.
+  logical :: Use_LA_windsea = .false.
   logical :: orig_PE_calc = .true.
   logical :: Use_MLD_iteration=.false. ! False to use old ePBL method.
   logical :: Orig_MLD_iteration=.false. ! False to use old MLD value
@@ -170,6 +175,7 @@ type, public :: energetic_PBL_CS ; private
     ML_depth, &        ! The mixed layer depth in m.
     ML_depth2, &       ! The mixed layer depth in m.
     Enhance_V, &       ! The enhancement to the turbulent velocity scale (non-dim)
+    MSTAR_MIX, &       ! Mstar used in EPBL
     diag_TKE_wind, &   ! The wind source of TKE.
     diag_TKE_MKE, &    ! The resolved KE source of TKE.
     diag_TKE_conv, &   ! The convective source of TKE.
@@ -187,7 +193,7 @@ type, public :: energetic_PBL_CS ; private
   integer :: id_TKE_mech_decay = -1, id_TKE_conv_decay = -1
   integer :: id_Hsfc_used = -1
   integer :: id_Mixing_Length = -1, id_Velocity_Scale = -1
-  integer :: id_OSBL = -1, id_LT_Enhancement = -1
+  integer :: id_OSBL = -1, id_LT_Enhancement = -1, id_MSTAR_mix = -1
 end type energetic_PBL_CS
 
 integer :: num_msg = 0, max_msg = 2
@@ -355,9 +361,10 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
   real :: I_dtrho   ! 1.0 / (dt * Rho0) in m3 kg-1 s-1.  This is
                     ! used convert TKE back into ustar^3.
   real :: U_star    ! The surface friction velocity, in m s-1.
-  real :: U_10      ! An approximate (neutral) wind speed backed out of the friction velocity
+  real :: U_Star_Mean ! The surface friction without gustiness in m s-1.
   real :: vstar     ! An in-situ turbulent velocity, in m s-1.
   real :: Enhance_V ! An enhancement factor for vstar, based here on Langmuir impact.
+  real :: LA        ! The Langmuir number (non-dim)
   real :: hbs_here  ! The local minimum of hb_hs and MixLen_shape, times a
                     ! conversion factor from H to M, in m H-1.
   real :: nstar_FC  ! The fraction of conv_PErel that can be converted to mixing, nondim.
@@ -476,13 +483,12 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
   real :: MSTAR_A  ! MSTAR_A and MSTAR_B are coefficients in hyperbolic decay which
   real :: MSTAR_B  !  are computed to match the value and slope of the linear fit at the
                    !  value of mld_over_stab where the transition is set.
-  real :: MSTAR_MIX ! The value of mstar (Proportionality of TKE to drive mixing to ustar
+  real :: MSTAR_MIX! The value of mstar (Proportionality of TKE to drive mixing to ustar
                     ! cubed) which is computed as a function of latitude, boundary layer depth,
                     ! and the Monin-Obhukov depth.
-  type(cvmix_global_params_type) :: CVMIX_gravity
   logical :: debug=.false.  ! Change this hard-coded value for debugging.
 !  The following arrays are used only for debugging purposes.
-  real :: dPE_debug, mixing_debug
+  real :: dPE_debug, mixing_debug, taux2, tauy2
   real, dimension(20) :: TKE_left_itt, PE_chg_itt, Kddt_h_itt, dPEa_dKd_itt, MKE_src_itt
   real, dimension(SZI_(G),SZK_(GV)) :: &
     mech_TKE_k, conv_PErel_k
@@ -514,6 +520,7 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
 
   h_tt_min = 0.0
   vonKar = 0.41
+  mstar_mix=CS%MSTAR!Initialize to mstar
   I_dtrho = 0.0 ; if (dt*GV%Rho0 > 0.0) I_dtrho = 1.0 / (dt*GV%Rho0)
 
   ! Determine whether to zero out diagnostics before accumulation.
@@ -535,7 +542,6 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
     if (CS%Mixing_Diagnostics) then
       CS%Mixing_Length(:,:,:) = 0.0
       CS%Velocity_Scale(:,:,:) = 0.0
-      !CS%Mstar_Used(:,:) = 0.0 ! Should add diagnostic Mstar_Used
     endif
 !!OMP end parallel
   endif
@@ -597,14 +603,21 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
 
 
       U_Star = fluxes%ustar(i,j)
+      taux2 = 0.
+      if ((G%mask2dCu(I-1,j) + G%mask2dCu(I,j)) > 0) &
+        taux2 = (G%mask2dCu(I-1,j)*fluxes%taux(I-1,j)**2 + &
+                 G%mask2dCu(I,j)*fluxes%taux(I,j)**2) / (G%mask2dCu(I-1,j) + G%mask2dCu(I,j))
+      tauy2 = 0.0
+      if ((G%mask2dCv(i,J-1) + G%mask2dCv(i,J)) > 0) &
+        tauy2 = (G%mask2dCv(i,J-1)*fluxes%tauy(i,J-1)**2 + &
+                 G%mask2dCv(i,J)*fluxes%tauy(i,J)**2) / (G%mask2dCv(i,J-1) + G%mask2dCv(i,J))
+      U_Star_Mean = sqrt(sqrt(taux2 + tauy2)/GV%rho0)
       if (associated(fluxes%ustar_shelf) .and. associated(fluxes%frac_shelf_h)) then
         if (fluxes%frac_shelf_h(i,j) > 0.0) &
           U_Star = (1.0 - fluxes%frac_shelf_h(i,j)) * U_star + &
                     fluxes%frac_shelf_h(i,j) * fluxes%ustar_shelf(i,j)
       endif
       if (U_Star < CS%ustar_min) U_Star = CS%ustar_min
-      ! Computing u10 based on u_star and COARE 3.5 relationships
-      call ust_2_u10_coare3p5(U_STAR*sqrt(GV%Rho0/1.225),U_10)
       ! Computing B_Star, or the Buoyancy flux over the friction velocity.
       B_Star = min(0.0,-buoy_Flux(i,j)/U_Star)
       if (CS%omega_frac >= 1.0) then ; absf(i) = 2.0*CS%omega
@@ -617,7 +630,7 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
       ! Computing stability scale which correlates with TKE for mixing, where
       ! TKE for mixing = TKE production minus TKE dissipation
       Stab_Scale = -u_star**2 / ( VonKar * ( C_MO * B_STAR +  C_EK * u_star * absf(i)))
-      
+
       if (CS%Use_Mstar_Fixed) then
         mech_TKE(i) = (dt*CS%mstar*GV%Rho0)*((U_Star**3))
         conv_PErel(i) = 0.0
@@ -701,9 +714,16 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
       ! Initialize ENHANCE_V to 1
       ENHANCE_V=1.e0
       do OBL_IT=1,MAX_OBL_IT ; if (.not. OBL_CONVERGED) then
-        if (CS%Use_LT_LiFunction) then   
-          ENHANCE_V = cvmix_kpp_efactor_model ( u_10, u_star, MLD_guess, cvmix_gravity)  
-        endif   
+        if (CS%Use_LA_windsea) then
+          call get_LA_windsea( u_star_mean, MLD_guess, GV, LA)
+          if (CS%LT_Enhance_Form==1) then
+            !Original w'/ust scaling
+            ENHANCE_V = (1+(1.4*LA)**(-2)+(5.4*LA)**(-4))**(1.5)
+          elseif (CS%LT_Enhance_Form==2) then
+            !New Mix_LT/Mix_ST scaling
+            ENHANCE_V = (1.+CS%LT_ENHANCE_COEF*LA**CS%LT_ENHANCE_EXP)
+          endif
+        endif
         CS%ML_depth(i,j) = h(i,1)*GV%H_to_m
         !CS%ML_depth2(i,j) = h(i,1)*GV%H_to_m
 
@@ -719,12 +739,13 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
           if ((MLD_over_Stab) .ge. CS%MSTAR_XINT) then
             !Within linear regime
             MSTAR_mix = CS%MSTAR_SLOPE*(MLD_over_Stab-CS%MSTAR_XINT)+CS%MSTAR_AT_XINT
+            if (CS%MSTAR_CAP>=0.) MSTAR_mix = min(CS%MSTAR_CAP,MSTAR_MIX)
           else
             !Within hypterbolic decay regime
             MSTAR_mix = (MSTAR_B*(MLD_over_Stab-CS%MSTAR_XINT)+MSTAR_A)**(MSTAR_N)
           endif
           !Reset mech_tke and conv_perel values (based on new mstar)
-          mech_TKE(i) = (dt*MSTAR_mix*GV%Rho0)*((U_Star**3))
+          mech_TKE(i) = (dt*MSTAR_mix*ENHANCE_V*GV%Rho0)*((U_Star**3))
           conv_PErel(i) = 0.0
           if (CS%TKE_diagnostics) then
             CS%diag_TKE_wind(i,j) = CS%diag_TKE_wind(i,j) + mech_TKE(i) * IdtdR0
@@ -745,7 +766,7 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
             conv_PErel(i) = conv_PErel(i) + TKE_forced(i,j,1)
           endif
         else
-          mech_TKE(i) = mech_TKE_top(i)*ENHANCE_V**(3.) ; conv_PErel(i) = conv_PErel_top(i)
+          mech_TKE(i) = mech_TKE_top(i)*ENHANCE_V ; conv_PErel(i) = conv_PErel_top(i)
         endif
 
         if (CS%TKE_diagnostics) then
@@ -1368,7 +1389,7 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
         enddo
       endif
       CS%Enhance_V(i,j) = Enhance_V
-
+      CS%MSTAR_MIX(i,j) = MSTAR_MIX
     else
       ! For masked points, Kd_int must still be set (to 0) because it has intent(out).
       do K=1,nz+1
@@ -1422,6 +1443,8 @@ subroutine energetic_PBL(h_3d, u_3d, v_3d, tv, fluxes, dt, Kd_int, G, GV, CS, &
       call post_data(CS%id_OSBL, CS%ML_Depth2, CS%diag)
     if (CS%id_LT_Enhancement >0) &
       call post_data(CS%id_LT_Enhancement, CS%Enhance_V, CS%diag)
+    if (CS%id_MSTAR_MIX >0) &
+      call post_data(CS%id_MSTAR_MIX, CS%MSTAR_MIX, CS%diag)
   endif
 
 end subroutine energetic_PBL
@@ -1740,12 +1763,12 @@ subroutine energetic_PBL_get_MLD(CS, MLD, G)
 end subroutine energetic_PBL_get_MLD
 
 !> Computes wind speed from ustar_air based on COARE 3.5 Cd relationship
-subroutine ust_2_u10_coare3p5(USTair,U10)
+subroutine ust_2_u10_coare3p5(USTair,U10,GV)
   real, intent(in)  :: USTair
+  type(verticalGrid_type), intent(in) :: GV
   real, intent(out) :: U10
   real, parameter :: vonkar = 0.4
   real, parameter :: nu=1e-6
-  real, parameter :: grav = 9.81
   real :: z0sm, z0, z0rough, u10a, alpha, CD
   integer :: CT
 
@@ -1764,7 +1787,7 @@ subroutine ust_2_u10_coare3p5(USTair,U10)
     CT=CT+1
     u10a = u10
     alpha = min(0.028,0.0017 * u10 - 0.005)
-    z0rough = alpha * USTair**2/grav ! Compute z0rough from ustar guess
+    z0rough = alpha * USTair**2/GV%g_Earth ! Compute z0rough from ustar guess
     z0=z0sm+z0rough
     CD = ( vonkar / log(10/z0) )**2 ! Compute CD from derived roughness
     u10 = USTair/sqrt(CD);!Compute new u10 from derived CD, while loop
@@ -1781,6 +1804,98 @@ subroutine ust_2_u10_coare3p5(USTair,U10)
   enddo
   return
 end subroutine ust_2_u10_coare3p5
+
+subroutine get_LA_windsea(ustar, hbl, GV, LA)
+! Original description:
+! This function returns the enhancement factor, given the 10-meter
+! wind (m/s), friction velocity (m/s) and the boundary layer depth (m).
+! Update (Jan/25):
+! Converted from function to subroutine, now returns Langmuir number.
+! Computs 10m wind internally, so only ustar and hbl need passed to
+! subroutine.
+!
+! Qing Li, 160606
+! BGR port from CVMix to MOM6 Jan/25/2017
+! BGR change output to LA from Efactor
+! BGR remove u10 input
+
+! Input
+  real, intent(in) :: &
+       ! water-side surface friction velocity (m/s)
+       ustar, &
+       ! boundary layer depth (m)
+       hbl
+  type(verticalGrid_type), intent(in) :: GV
+  real, intent(out) :: LA
+! Local variables
+  ! parameters
+  real, parameter :: &
+       ! ratio of U19.5 to U10 (Holthuijsen, 2007)
+       u19p5_to_u10 = 1.075, &
+       ! ratio of mean frequency to peak frequency for
+       ! Pierson-Moskowitz spectrum (Webb, 2011)
+       fm_to_fp = 1.296, &
+       ! ratio of surface Stokes drift to U10
+       us_to_u10 = 0.0162, &
+       ! loss ratio of Stokes transport
+       r_loss = 0.667
+  real :: us, hm0, fm, fp, vstokes, kphil, kstar
+  real :: z0, z0i, r1, r2, r3, r4, tmp, us_sl, lasl_sqr_i
+  real :: pi, u10
+  pi = 4.0*atan(1.0)
+  ! Computing u10 based on u_star and COARE 3.5 relationships
+  call ust_2_u10_coare3p5(ustar*sqrt(GV%Rho0/1.225),U10,GV)
+  if (u10 .gt. 0.0 .and. ustar .gt. 0.0) then
+    ! surface Stokes drift
+    us = us_to_u10*u10
+    !
+    ! significant wave height from Pierson-Moskowitz
+    ! spectrum (Bouws, 1998)
+    hm0 = 0.0246 *u10**2
+    !
+    ! peak frequency (PM, Bouws, 1998)
+    tmp = 2.0 * PI * u19p5_to_u10 * u10
+    fp = 0.877 * GV%g_Earth / tmp
+    !
+    ! mean frequency
+    fm = fm_to_fp * fp
+    !
+    ! total Stokes transport (a factor r_loss is applied to account
+    !  for the effect of directional spreading, multidirectional waves
+    !  and the use of PM peak frequency and PM significant wave height
+    !  on estimating the Stokes transport)
+    vstokes = 0.125 * PI * r_loss * fm * hm0**2
+    !
+    ! the general peak wavenumber for Phillips' spectrum
+    ! (Breivik et al., 2016) with correction of directional spreading
+    kphil = 0.176 * us / vstokes
+    !
+    ! surface layer averaged Stokes dirft with Stokes drift profile
+    ! estimated from Phillips' spectrum (Breivik et al., 2016)
+    ! the directional spreading effect from Webb and Fox-Kemper, 2015
+    ! is also included
+    kstar = kphil * 2.56
+    ! surface layer
+    z0 = 0.2 * abs(hbl)
+    z0i = 1.0 / z0
+    ! term 1 to 4
+    r1 = ( 0.151 / kphil * z0i -0.84 ) &
+         * ( 1.0 - exp(-2.0 * kphil * z0) )
+    r2 = -( 0.84 + 0.0591 / kphil * z0i ) &
+         *sqrt( 2.0 * PI * kphil * z0 ) &
+         *erfc( sqrt( 2.0 * kphil * z0 ) )
+    r3 = ( 0.0632 / kstar * z0i + 0.125 ) &
+         * (1.0 - exp(-2.0 * kstar * z0) )
+    r4 = ( 0.125 + 0.0946 / kstar * z0i ) &
+         *sqrt( 2.0 * PI *kstar * z0) &
+         *erfc( sqrt( 2.0 * kstar * z0 ) )
+    us_sl = us * (0.715 + r1 + r2 + r3 + r4)
+    !
+    LA = sqrt(ustar / us_sl)
+  else
+    LA=1.e8
+  endif
+endsubroutine Get_LA_windsea
 
 subroutine energetic_PBL_init(Time, G, GV, param_file, diag, CS)
   type(time_type), target, intent(in)    :: Time
@@ -1824,6 +1939,10 @@ subroutine energetic_PBL_init(Time, G, GV, param_file, diag, CS)
                  "The exponent applied to the ratio of the distance to the MLD \n"//&
                  "and the MLD depth which determines the shape of the mixing length.",&
                  "units=nondim", default=2.0)
+  call get_param(param_file, mod, "MSTAR_CAP", CS%mstar_cap, &
+                 "Maximum value of mstar allowed in model if non-negative\n"//&
+                 "(used if MSTAR_FIXED=false).",&
+                 "units=nondim", default=-1.0)
   call get_param(param_file, mod, "MSTAR_SLOPE", CS%mstar_slope, &
                  "The slope of the linear relationship between mstar \n"//&
                  "and the length scale ratio (used if MSTAR_FIXED=false).",&
@@ -1932,10 +2051,27 @@ subroutine energetic_PBL_init(Time, G, GV, param_file, diag, CS)
                  "in the boundary layer, applied when local stratification \n"//&
                  "is negative.  The default is 0, but should probably be ~1.", &
                  units="nondim", default=0.0)
-   call get_param(param_file, mod, "USE_LT_LI2016", CS%USE_LT_LiFunction, &
+   call get_param(param_file, mod, "USE_LA_LI2016", CS%USE_LA_Windsea, &
                  "A logical to use the Li et al. 2016 (submitted) formula to \n"//&
-                 " determine the enhancement of velocity due to Langmuir \n"//&
-                 " turbulence.", units="nondim", default=.false.)
+                 " determine the Langmuir number.",&
+                 units="nondim", default=.false.)
+   call get_param(param_file, mod, "LT_ENHANCE", CS%LT_ENHANCE_FORM, &
+                 "Integer for LT enhancement function mode. \n"//&
+                 " *Requires USE_LA_LI2016 to be set to True. \n"//&
+                 "Options: 0 - no LT enhancement \n"//&
+                 "         1 - Van Roekel et al. 2014/Li et al., 2016  \n"//&
+                 "         2 - New LES net mixing based derivation (requires coefficients)",&
+                 units="nondim", default=0)
+   call get_param(param_file, mod, "LT_ENHANCE_COEF", CS%LT_ENHANCE_COEF, &
+                 "Coefficient for Langmuir enhancement if LT_ENHANCE = 2",&
+                 units="nondim", default=1.57)
+   call get_param(param_file, mod, "LT_ENHANCE_EXP", CS%LT_ENHANCE_EXP, &
+                 "Exponent for Langmuir enhancement if LT_ENHANCE = 2",&
+                 units="nondim", default=-1.5)
+   if (CS%LT_ENHANCE_FORM.gt.0 .and. (.not.CS%USE_LA_Windsea)) then
+      call MOM_error(FATAL, "If flag USE_LA_LI2016 is false, then "//&
+                 " LT_ENHANCE must be 0.")
+  endif
   ! This gives a minimum decay scale that is typically much less than Angstrom.
   CS%ustar_min = 2e-4*CS%omega*(GV%Angstrom_z + GV%H_to_m*GV%H_subroundoff)
   call log_param(param_file, mod, "EPBL_USTAR_MIN", CS%ustar_min, &
@@ -1967,6 +2103,8 @@ subroutine energetic_PBL_init(Time, G, GV, param_file, diag, CS)
       Time, 'Velocity Scale that is used.', 'meter second-1')
   CS%id_LT_enhancement = register_diag_field('ocean_model', 'LT_Enhancement', diag%axesT1, &
       Time, 'LT enhancement that is used.', 'non-dim')
+  CS%id_MSTAR_mix = register_diag_field('ocean_model', 'MSTAR', diag%axesT1, &
+      Time, 'MSTAR that is used.', 'non-dim')
   CS%id_OSBL = register_diag_field('ocean_model', 'ePBL_OSBL', diag%axesT1, &
       Time, 'Boundary layer depth from the iteration.', 'meter')
 
@@ -1998,6 +2136,7 @@ subroutine energetic_PBL_init(Time, G, GV, param_file, diag, CS)
   call safe_alloc_alloc(CS%ML_depth, isd, ied, jsd, jed)
   call safe_alloc_alloc(CS%ML_depth2, isd, ied, jsd, jed)
   call safe_alloc_alloc(CS%Enhance_V, isd, ied, jsd, jed)
+  call safe_alloc_alloc(CS%MSTAR_MIX, isd, ied, jsd, jed)
 
 end subroutine energetic_PBL_init
 
@@ -2009,6 +2148,7 @@ subroutine energetic_PBL_end(CS)
   if (allocated(CS%ML_depth))            deallocate(CS%ML_depth)
   if (allocated(CS%ML_depth2))           deallocate(CS%ML_depth2)
   if (allocated(CS%Enhance_V))           deallocate(CS%Enhance_V)
+  if (allocated(CS%MSTAR_MIX))           deallocate(CS%MSTAR_MIX)
   if (allocated(CS%diag_TKE_wind))       deallocate(CS%diag_TKE_wind)
   if (allocated(CS%diag_TKE_MKE))        deallocate(CS%diag_TKE_MKE)
   if (allocated(CS%diag_TKE_conv))       deallocate(CS%diag_TKE_conv)
