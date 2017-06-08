@@ -3,7 +3,7 @@ module MOM_forcing_type
 
 ! This file is part of MOM6. See LICENSE.md for the license.
 
-use MOM_checksums,     only : hchksum, qchksum, uchksum, vchksum, is_NaN
+use MOM_debugging,     only : hchksum, uvchksum
 use MOM_cpu_clock,     only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE
 use MOM_diag_mediator, only : post_data, register_diag_field, register_scalar_field
 use MOM_diag_mediator, only : time_type, diag_ctrl, safe_alloc_alloc, query_averaging_enabled
@@ -196,6 +196,7 @@ type, public :: forcing_diags
   integer :: id_net_heat_coupler    = -1, id_net_heat_surface      = -1
   integer :: id_sens                = -1, id_LwLatSens             = -1
   integer :: id_sw                  = -1, id_lw                    = -1
+  integer :: id_sw_vis              = -1, id_sw_nir                = -1
   integer :: id_lat_evap            = -1, id_lat_frunoff           = -1
   integer :: id_lat                 = -1, id_lat_fprec             = -1
   integer :: id_heat_content_lrunoff= -1, id_heat_content_frunoff  = -1
@@ -813,10 +814,9 @@ subroutine MOM_forcing_chksum(mesg, fluxes, G, haloshift)
   ! Note that for the chksum calls to be useful for reproducing across PE
   ! counts, there must be no redundant points, so all variables use is..ie
   ! and js...je as their extent.
-  if (associated(fluxes%taux)) &
-    call uchksum(fluxes%taux, mesg//" fluxes%taux",G%HI,haloshift=1)
-  if (associated(fluxes%tauy)) &
-    call vchksum(fluxes%tauy, mesg//" fluxes%tauy",G%HI,haloshift=1)
+  if (associated(fluxes%taux) .and. associated(fluxes%tauy)) &
+    call uvchksum(mesg//" fluxes%tau[xy]", fluxes%taux, fluxes%tauy, G%HI, &
+                  haloshift=hshift, symmetric=.true.)
   if (associated(fluxes%ustar)) &
     call hchksum(fluxes%ustar, mesg//" fluxes%ustar",G%HI,haloshift=hshift)
   if (associated(fluxes%buoy)) &
@@ -1235,6 +1235,12 @@ subroutine register_forcing_type_diags(Time, diag, use_temperature, handles, use
         cmor_field_name='rsntds', cmor_units='W m-2',                          &
         cmor_standard_name='net_downward_shortwave_flux_at_sea_water_surface', &
         cmor_long_name='Net Downward Shortwave Radiation at Sea Water Surface')
+  handles%id_sw_vis = register_diag_field('ocean_model', 'sw_vis', diag%axesT1, Time,     &
+        'Shortwave radiation direct and diffuse flux into the ocean in the visible band', &
+        'Watt/m^2')
+  handles%id_sw_nir = register_diag_field('ocean_model', 'sw_nir', diag%axesT1, Time,     &
+        'Shortwave radiation direct and diffuse flux into the ocean in the near-infrared band', &
+        'Watt/m^2')
 
   handles%id_LwLatSens = register_diag_field('ocean_model', 'LwLatSens', diag%axesT1, Time, &
         'Combined longwave, latent, and sensible heating at ocean surface', 'Watt/m^2')
@@ -1556,7 +1562,7 @@ subroutine forcing_accumulate(flux_tmp, fluxes, dt, G, wt2)
   type(forcing),         intent(in)    :: flux_tmp
   type(forcing),         intent(inout) :: fluxes
   real,                  intent(in)    :: dt
-  type(ocean_grid_type), intent(inout) :: G
+  type(ocean_grid_type), intent(inout) :: G    !< The ocean's grid structure
   real,                  intent(out)   :: wt2
 
   ! This subroutine copies mechancal forcing from flux_tmp to fluxes and
@@ -1807,7 +1813,7 @@ subroutine forcing_diagnostics(fluxes, state, dt, G, diag, handles)
         call post_data(handles%id_total_net_massout, total_transport, diag)
       endif
     endif
-    
+
     if(handles%id_massout_flux > 0) call post_data(handles%id_massout_flux,fluxes%netMassOut,diag)
 
     if(handles%id_net_massin > 0 .or. handles%id_total_net_massin > 0) then
@@ -1825,7 +1831,7 @@ subroutine forcing_diagnostics(fluxes, state, dt, G, diag, handles)
         call post_data(handles%id_total_net_massin, total_transport, diag)
       endif
     endif
-    
+
     if(handles%id_massin_flux > 0) call post_data(handles%id_massin_flux,fluxes%netMassIn,diag)
 
     if ((handles%id_evap > 0) .and. ASSOCIATED(fluxes%evap)) &
@@ -2080,6 +2086,14 @@ subroutine forcing_diagnostics(fluxes, state, dt, G, diag, handles)
 
     if ((handles%id_sw > 0) .and. ASSOCIATED(fluxes%sw)) then
       call post_data(handles%id_sw, fluxes%sw, diag)
+    endif
+    if ((handles%id_sw_vis > 0) .and. ASSOCIATED(fluxes%sw_vis_dir) .and. &
+        ASSOCIATED(fluxes%sw_vis_dif)) then
+      call post_data(handles%id_sw_vis, fluxes%sw_vis_dir+fluxes%sw_vis_dif, diag)
+    endif
+    if ((handles%id_sw_nir > 0) .and. ASSOCIATED(fluxes%sw_nir_dir) .and. &
+        ASSOCIATED(fluxes%sw_nir_dif)) then
+      call post_data(handles%id_sw_nir, fluxes%sw_nir_dir+fluxes%sw_nir_dif, diag)
     endif
     if ((handles%id_total_sw > 0) .and. ASSOCIATED(fluxes%sw)) then
       total_transport = global_area_integral(fluxes%sw,G)

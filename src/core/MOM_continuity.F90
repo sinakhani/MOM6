@@ -4,6 +4,7 @@ module MOM_continuity
 ! This file is part of MOM6. See LICENSE.md for the license.
 
 use MOM_continuity_PPM, only : continuity_PPM, continuity_PPM_init
+use MOM_continuity_PPM, only : continuity_PPM_stencil
 use MOM_continuity_PPM, only : continuity_PPM_end, continuity_PPM_CS
 use MOM_diag_mediator, only : time_type, diag_ctrl
 use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING, is_root_pe
@@ -18,7 +19,7 @@ implicit none ; private
 
 #include <MOM_memory.h>
 
-public continuity, continuity_init, continuity_end
+public continuity, continuity_init, continuity_end, continuity_stencil
 
 !> Control structure for mom_continuity
 type, public :: continuity_CS ; private
@@ -42,8 +43,8 @@ subroutine continuity(u, v, hin, h, uh, vh, dt, G, GV, CS, uhbt, vhbt, OBC, &
                       uhbt_aux, vhbt_aux, u_cor_aux, v_cor_aux, BT_cont)
   type(ocean_grid_type), intent(inout)                     :: G   !< Ocean grid structure.
   type(verticalGrid_type), intent(in)                      :: GV  !< Vertical grid structure.
-  real, dimension(SZIB_(G),SZJ_(G),SZK_(G)), intent(inout) :: u   !< Zonal velocity, in m/s.
-  real, dimension(SZI_(G),SZJB_(G),SZK_(G)), intent(inout) :: v   !< Meridional velocity, in m/s.
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(G)), intent(in)    :: u   !< Zonal velocity, in m/s.
+  real, dimension(SZI_(G),SZJB_(G),SZK_(G)), intent(in)    :: v   !< Meridional velocity, in m/s.
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)),  intent(in)    :: hin !< Initial layer thickness, in m or kg/m2.
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)),  intent(inout) :: h   !< Final layer thickness, in m or kg/m2.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(G)), intent(out)   :: uh  !< Volume flux through zonal faces =
@@ -151,6 +152,20 @@ subroutine continuity_init(Time, G, GV, param_file, diag, CS)
   endif
 
 end subroutine continuity_init
+
+
+!> continuity_stencil returns the continuity solver stencil size
+function continuity_stencil(CS) result(stencil)
+  type(continuity_CS), pointer       :: CS  !< Module's control structure.
+  integer ::  stencil !< The continuity solver stencil size with the current settings.
+
+  stencil = 1
+
+  if (CS%continuity_scheme == PPM_SCHEME) then
+    stencil = continuity_PPM_stencil(CS%PPM_CSp)
+  endif
+
+end function continuity_stencil
 
 !> Destructor for continuity_cs.
 subroutine continuity_end(CS)

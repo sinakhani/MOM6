@@ -52,7 +52,7 @@ module pseudo_salt_tracer
 !*                                                                     *
 !********+*********+*********+*********+*********+*********+*********+**
 
-use MOM_checksums,     only : hchksum
+use MOM_debugging,     only : hchksum
 use MOM_diag_mediator, only : post_data, register_diag_field, safe_alloc_ptr
 use MOM_diag_mediator, only : diag_ctrl
 use MOM_diag_to_Z, only : register_Z_tracer, diag_to_Z_CS
@@ -128,9 +128,9 @@ contains
 
 function register_pseudo_salt_tracer(HI, GV, param_file, CS, tr_Reg, restart_CS)
   type(hor_index_type),       intent(in) :: HI
-  type(verticalGrid_type),    intent(in) :: GV
-  type(param_file_type),      intent(in) :: param_file
-  type(pseudo_salt_tracer_CS),        pointer    :: CS
+  type(verticalGrid_type),    intent(in) :: GV   !< The ocean's vertical grid structure
+  type(param_file_type),      intent(in) :: param_file !< A structure to parse for run-time parameters
+  type(pseudo_salt_tracer_CS),  pointer    :: CS
   type(tracer_registry_type), pointer    :: tr_Reg
   type(MOM_restart_CS),       pointer    :: restart_CS
 ! This subroutine is used to register tracer fields and subroutines
@@ -202,9 +202,9 @@ subroutine initialize_pseudo_salt_tracer(restart, day, G, GV, h, diag, OBC, CS, 
                                   sponge_CSp, diag_to_Z_CSp, tv)
   logical,                            intent(in) :: restart
   type(time_type), target,            intent(in) :: day
-  type(ocean_grid_type),              intent(in) :: G
-  type(verticalGrid_type),            intent(in) :: GV
-  real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in) :: h
+  type(ocean_grid_type),              intent(in) :: G    !< The ocean's grid structure
+  type(verticalGrid_type),            intent(in) :: GV   !< The ocean's vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in) :: h    !< Layer thicknesses, in H (usually m or kg m-2)
   type(diag_ctrl), target,            intent(in) :: diag
   type(ocean_OBC_type),               pointer    :: OBC
   type(pseudo_salt_tracer_CS),          pointer    :: CS
@@ -257,7 +257,7 @@ subroutine initialize_pseudo_salt_tracer(restart, day, G, GV, h, diag, OBC, CS, 
       enddo ; enddo ; enddo
     endif
   enddo ! Tracer loop
-  
+
   if (associated(OBC)) then
   ! All tracers but the first have 0 concentration in their inflows. As this
   ! is the default value, the following calls are unnecessary.
@@ -307,8 +307,8 @@ end subroutine initialize_pseudo_salt_tracer
 
 subroutine pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, G, GV, CS, tv, debug, &
               evap_CFL_limit, minimum_forcing_depth)
-  type(ocean_grid_type),              intent(in) :: G
-  type(verticalGrid_type),            intent(in) :: GV
+  type(ocean_grid_type),              intent(in) :: G    !< The ocean's grid structure
+  type(verticalGrid_type),            intent(in) :: GV   !< The ocean's vertical grid structure
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in) :: h_old, h_new, ea, eb
   type(forcing),                      intent(in) :: fluxes
   real,                               intent(in) :: dt
@@ -317,7 +317,7 @@ subroutine pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, G
   logical,                            intent(in) :: debug
   real,                             optional,intent(in)  :: evap_CFL_limit
   real,                             optional,intent(in)  :: minimum_forcing_depth
-  
+
 !   This subroutine applies diapycnal diffusion and any other column
 ! tracer physics or chemistry to the tracers from this file.
 ! This is a simple example of a set of advected passive tracers.
@@ -339,10 +339,10 @@ subroutine pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, G
 !                 register_pseudo_salt_tracer.
 !  (in)      tv - Thermodynamic structure with T and S
 !  (in)      evap_CFL_limit - Limits how much water can be fluxed out of the top layer
-!                             Stored previously in diabatic CS.  
+!                             Stored previously in diabatic CS.
 !  (in)      minimum_forcing_depth - The smallest depth over which fluxes can be applied
-!                             Stored previously in diabatic CS.  
-!  (in)      debug - Calculates checksums   
+!                             Stored previously in diabatic CS.
+!  (in)      debug - Calculates checksums
 !
 ! The arguments to this subroutine are redundant in that
 !     h_new[k] = h_old[k] + ea[k] - eb[k-1] + eb[k] - ea[k+1]
@@ -354,18 +354,18 @@ subroutine pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, G
   real, allocatable :: local_tr(:,:,:)
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: h_work ! Used so that h can be modified
   real, dimension(:,:), pointer :: net_salt
-  
-  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke  
+
+  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   net_salt=>fluxes%netSalt
-  
+
   if (.not.associated(CS)) return
   if (CS%ntr < 1) return
 
   if (debug) then
-    call hchksum(tv%S,"salt pre pseudo-salt vertdiff", G%HI) 
-    call hchksum(CS%tr(:,:,:,1),"pseudo_salt pre pseudo-salt vertdiff", G%HI) 
-  endif  
-  
+    call hchksum(tv%S,"salt pre pseudo-salt vertdiff", G%HI)
+    call hchksum(CS%tr(:,:,:,1),"pseudo_salt pre pseudo-salt vertdiff", G%HI)
+  endif
+
   ! This uses applyTracerBoundaryFluxesInOut, usually in ALE mode
   if (present(evap_CFL_limit) .and. present(minimum_forcing_depth)) then
     do k=1,nz ;do j=js,je ; do i=is,ie
@@ -376,17 +376,17 @@ subroutine pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, G
     call tracer_vertdiff(h_work, ea, eb, dt, CS%tr(:,:,:,1), G, GV)
   else
     call tracer_vertdiff(h_work, ea, eb, dt, CS%tr(:,:,:,1), G, GV)
-  endif  
-          
+  endif
+
   do k=1,nz ; do j=js,je ; do i=is,ie
     CS%diff(i,j,k,1) = CS%tr(i,j,k,1)-tv%S(i,j,k)
   enddo ; enddo ; enddo
-  
+
   if(debug) then
-    call hchksum(tv%S,"salt post pseudo-salt vertdiff", G%HI) 
-    call hchksum(CS%tr(:,:,:,1),"pseudo_salt post pseudo-salt vertdiff", G%HI) 
+    call hchksum(tv%S,"salt post pseudo-salt vertdiff", G%HI)
+    call hchksum(CS%tr(:,:,:,1),"pseudo_salt post pseudo-salt vertdiff", G%HI)
   endif
-    
+
   allocate(local_tr(G%isd:G%ied,G%jsd:G%jed,nz))
   do m=1,1
     if (CS%id_tracer(m)>0) then
@@ -419,9 +419,9 @@ subroutine pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, G
 end subroutine pseudo_salt_tracer_column_physics
 
 function pseudo_salt_stock(h, stocks, G, GV, CS, names, units, stock_index)
-  type(ocean_grid_type),              intent(in)    :: G
-  type(verticalGrid_type),            intent(in)    :: GV
-  real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in) :: h
+  type(ocean_grid_type),              intent(in)    :: G    !< The ocean's grid structure
+  type(verticalGrid_type),            intent(in)    :: GV   !< The ocean's vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in) :: h    !< Layer thicknesses, in H (usually m or kg m-2)
   real, dimension(:),                 intent(out)   :: stocks
   type(pseudo_salt_tracer_CS),                pointer       :: CS
   character(len=*), dimension(:),     intent(out)   :: names
@@ -467,16 +467,16 @@ function pseudo_salt_stock(h, stocks, G, GV, CS, names, units, stock_index)
                            (G%mask2dT(i,j) * G%areaT(i,j) * h(i,j,k))
     enddo ; enddo ; enddo
     stocks(m) = GV%H_to_kg_m2 * stocks(m)
-  enddo  
-  
+  enddo
+
   pseudo_salt_stock = CS%ntr
 
 end function pseudo_salt_stock
 
 subroutine pseudo_salt_tracer_surface_state(state, h, G, CS)
-  type(ocean_grid_type),                 intent(in)    :: G
+  type(ocean_grid_type),                 intent(in)    :: G    !< The ocean's grid structure
   type(surface),                         intent(inout) :: state
-  real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in)    :: h
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)), intent(in)    :: h    !< Layer thicknesses, in H (usually m or kg m-2)
   type(pseudo_salt_tracer_CS),                   pointer       :: CS
 !   This particular tracer package does not report anything back to the coupler.
 ! The code that is here is just a rough guide for packages that would.
@@ -488,7 +488,7 @@ subroutine pseudo_salt_tracer_surface_state(state, h, G, CS)
 !                 register_pseudo_salt_tracer.
   integer :: m, is, ie, js, je
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
-  
+
   if (.not.associated(CS)) return
 
   if (CS%coupled_tracers) then

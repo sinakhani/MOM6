@@ -711,11 +711,11 @@ subroutine save_restart(directory, time, G, CS, time_stamped, filename, GV)
 !  save_restart saves all registered variables to restart files.
   character(len=*),        intent(in)    :: directory
   type(time_type),         intent(in)    :: time
-  type(ocean_grid_type),   intent(inout) :: G
+  type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure
   type(MOM_restart_CS),    pointer       :: CS
   logical,          optional, intent(in) :: time_stamped
   character(len=*), optional, intent(in) :: filename
-  type(verticalGrid_type), optional, intent(in) :: GV
+  type(verticalGrid_type), optional, intent(in) :: GV   !< The ocean's vertical grid structure
 ! Arguments: directory - The directory where the restart file goes.
 !  (in)      time - The time of this restart file.
 !  (in)      G - The ocean's grid structure.
@@ -747,7 +747,7 @@ subroutine save_restart(directory, time, G, CS, time_stamped, filename, GV)
   character(len=8) :: t_grid_read
   character(len=64) :: var_name         ! A variable's name.
   real :: restart_time
-  character(len=32) :: filename_appendix = '' !fms appendix to filename for ensemble runs 
+  character(len=32) :: filename_appendix = '' !fms appendix to filename for ensemble runs
   integer :: length
 
   if (.not.associated(CS)) call MOM_error(FATAL, "MOM_restart " // &
@@ -830,7 +830,7 @@ subroutine save_restart(directory, time, G, CS, time_stamped, filename, GV)
         restartname = restartname(1:length)  //'.'//trim(filename_appendix)
       end if
     end if
-    
+
     restartpath = trim(directory)// trim(restartname)
 
     if (num_files < 10) then
@@ -889,7 +889,7 @@ subroutine restore_state(filename, directory, day, G, CS)
   character(len=*),      intent(in)  :: filename
   character(len=*),      intent(in)  :: directory
   type(time_type),       intent(out) :: day
-  type(ocean_grid_type), intent(in)  :: G
+  type(ocean_grid_type), intent(in)  :: G    !< The ocean's grid structure
   type(MOM_restart_CS),  pointer     :: CS
 !    This subroutine reads the model state from previously
 !  generated files.  All restart variables are read from the first
@@ -931,7 +931,7 @@ subroutine restore_state(filename, directory, day, G, CS)
   integer :: i, missing_fields
   real    :: t1, t2
   integer :: err
-  character(len=32) :: filename_appendix = '' !fms appendix to filename for ensemble runs 
+  character(len=32) :: filename_appendix = '' !fms appendix to filename for ensemble runs
   character(len=80) :: restartname
   integer :: length
 
@@ -1245,7 +1245,7 @@ subroutine restore_state(filename, directory, day, G, CS)
 end subroutine restore_state
 
 subroutine restart_init(param_file, CS, restart_root)
-  type(param_file_type), intent(in) :: param_file
+  type(param_file_type), intent(in) :: param_file !< A structure to parse for run-time parameters
   type(MOM_restart_CS),  pointer    :: CS
   character(len=*), optional, intent(in) :: restart_root
 ! Arguments: param_file - A structure indicating the open file to parse for

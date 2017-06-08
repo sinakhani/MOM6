@@ -36,6 +36,7 @@ module ocean_model_mod
 
 use MOM, only : initialize_MOM, step_MOM, MOM_control_struct, MOM_end
 use MOM, only : calculate_surface_state, finish_MOM_initialization
+use MOM, only : step_tracers
 use MOM_constants, only : CELSIUS_KELVIN_OFFSET, hlf
 use MOM_diag_mediator, only : diag_ctrl, enable_averaging, disable_averaging
 use MOM_diag_mediator, only : diag_mediator_close_registration, diag_mediator_end
@@ -76,7 +77,7 @@ use MOM_EOS, only : gsw_sp_from_sr, gsw_pt_from_ct
 #include <MOM_memory.h>
 
 #ifdef _USE_GENERIC_TRACER
-use MOM_generic_tracer, only : MOM_generic_flux_init,MOM_generic_tracer_fluxes_accumulate 
+use MOM_generic_tracer, only : MOM_generic_flux_init,MOM_generic_tracer_fluxes_accumulate
 #endif
 
 implicit none ; private
@@ -90,8 +91,8 @@ public ice_ocn_bnd_type_chksum
 public ocean_public_type_chksum
 public    ocean_model_data_get
 interface ocean_model_data_get
-  module procedure ocean_model_data1D_get 
-  module procedure ocean_model_data2D_get 
+  module procedure ocean_model_data1D_get
+  module procedure ocean_model_data2D_get
 end interface
 
 
@@ -114,7 +115,7 @@ type, public ::  ocean_public_type
   integer :: stagger = -999   ! The staggering relative to the tracer points
                     ! points of the two velocity components. Valid entries
                     ! include AGRID, BGRID_NE, CGRID_NE, BGRID_SW, and CGRID_SW,
-                    ! corresponding to the community-standard Arakawa notation. 
+                    ! corresponding to the community-standard Arakawa notation.
                     ! (These are named integers taken from mpp_parameter_mod.)
                     ! Following MOM, this is BGRID_NE by default when the ocean
                     ! is initialized, but here it is set to -999 so that a
@@ -133,7 +134,7 @@ type, public ::  ocean_public_type
   type(coupler_2d_bc_type) :: fields    ! A structure that may contain an
                                         ! array of named tracer-related fields.
   integer                  :: avg_kount ! Used for accumulating averages of this type.
-  integer, dimension(3)    :: axes = 0  ! Axis numbers that are available
+  integer, dimension(2)    :: axes = 0  ! Axis numbers that are available
                                         ! for I/O using this surface data.
 end type ocean_public_type
 
@@ -158,11 +159,11 @@ type, public :: ocean_state_type ; private
   logical :: use_ice_shelf    ! If true, the ice shelf model is enabled.
   logical :: icebergs_apply_rigid_boundary  ! If true, the icebergs can change ocean bd condition.
   real :: kv_iceberg          ! The viscosity of the icebergs in m2/s (for ice rigidity)
-  real :: berg_area_threshold ! Fraction of grid cell which iceberg must occupy 
+  real :: berg_area_threshold ! Fraction of grid cell which iceberg must occupy
                               !so that fluxes below are set to zero. (0.5 is a
                               !good value to use. Not applied for negative values.
   real :: latent_heat_fusion  ! Latent heat of fusion
-  real :: density_iceberg     ! A typical density of icebergs in kg/m3 (for ice rigidity) 
+  real :: density_iceberg     ! A typical density of icebergs in kg/m3 (for ice rigidity)
   type(ice_shelf_CS), pointer :: Ice_shelf_CSp => NULL()
   logical :: restore_salinity ! If true, the coupled MOM driver adds a term to
                               ! restore salinity to a specified value.
@@ -222,7 +223,8 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in)
   character(len=40)  :: mod = "ocean_model_init"  ! This module's name.
   character(len=48)  :: stagger
   integer :: secs, days
-  type(param_file_type) :: param_file
+  type(param_file_type) :: param_file !< A structure to parse for run-time parameters
+  logical :: offline_tracer_mode
 
   call callTree_enter("ocean_model_init(), ocean_model_MOM.F90")
   if (associated(OS)) then
@@ -237,11 +239,12 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in)
 
   OS%state%tr_fields => Ocean_sfc%fields
   OS%Time = Time_in
-  call initialize_MOM(OS%Time, param_file, OS%dirs, OS%MOM_CSp, Time_in)
+  call initialize_MOM(OS%Time, param_file, OS%dirs, OS%MOM_CSp, Time_in, &
+      offline_tracer_mode=offline_tracer_mode)
   OS%grid => OS%MOM_CSp%G ; OS%GV => OS%MOM_CSp%GV
   OS%C_p = OS%MOM_CSp%tv%C_p
   OS%fluxes%C_p = OS%MOM_CSp%tv%C_p
-  
+
   ! Read all relevant parameters and write them to the model log.
   call log_version(param_file, mod, version, "")
   call get_param(param_file, mod, "RESTART_CONTROL", OS%Restart_control, &
@@ -292,7 +295,7 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in)
 
   call get_param(param_file, mod, "ICEBERGS_APPLY_RIGID_BOUNDARY",  OS%icebergs_apply_rigid_boundary, &
                  "If true, allows icebergs to change boundary condition felt by ocean", default=.false.)
-  
+
   if (OS%icebergs_apply_rigid_boundary) then
     call get_param(param_file, mod, "KV_ICEBERG",  OS%kv_iceberg, &
                  "The viscosity of the icebergs",  units="m2 s-1",default=1.0e10)
@@ -315,7 +318,7 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in)
      call initialize_ice_shelf(param_file, OS%grid, OS%Time, OS%ice_shelf_CSp, &
                                OS%MOM_CSp%diag, OS%fluxes)
   endif
-  if (OS%icebergs_apply_rigid_boundary)  then      
+  if (OS%icebergs_apply_rigid_boundary)  then
     !call allocate_forcing_type(OS%grid, OS%fluxes, iceberg=.true.)
     !This assumes that the iceshelf and ocean are on the same grid. I hope this is true
     if (.not. OS%use_ice_shelf) call allocate_forcing_type(OS%grid, OS%fluxes, ustar=.true., shelf=.true.)
@@ -334,15 +337,16 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in)
 
   if(ASSOCIATED(OS%grid%Domain%maskmap)) then
      call initialize_ocean_public_type(OS%grid%Domain%mpp_domain, Ocean_sfc, &
-                                       maskmap=OS%grid%Domain%maskmap)
+                                       OS%MOM_CSp%diag, maskmap=OS%grid%Domain%maskmap)
   else
-     call initialize_ocean_public_type(OS%grid%Domain%mpp_domain, Ocean_sfc)
+     call initialize_ocean_public_type(OS%grid%Domain%mpp_domain, Ocean_sfc, &
+                                       OS%MOM_CSp%diag)
   endif
 !  call convert_state_to_ocean_type(state, Ocean_sfc, OS%grid)
 
   call close_param_file(param_file)
   call diag_mediator_close_registration(OS%MOM_CSp%diag)
- 
+
   if (is_root_pe()) &
     write(*,'(/12x,a/)') '======== COMPLETED MOM INITIALIZATION ========'
 
@@ -395,14 +399,14 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, &
   real :: weight            ! Flux accumulation weight
   real :: time_step         ! The time step of a call to step_MOM in seconds.
   integer :: secs, days
-  
+
   call callTree_enter("update_ocean_model(), ocean_model_MOM.F90")
   call get_time(Ocean_coupling_time_step, secs, days)
   time_step = 86400.0*real(days) + real(secs)
-  
+
   if (time_start_update /= OS%Time) then
     call MOM_error(WARNING, "update_ocean_model: internal clock does not "//&
-                             "with time_start_update argument.")
+                            "agree with time_start_update argument.")
   endif
   if (.not.associated(OS)) then
     call MOM_error(FATAL, "update_ocean_model called with an unassociated "// &
@@ -447,7 +451,7 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, &
      !This assumes that the iceshelf and ocean are on the same grid. I hope this is true
      call add_berg_flux_to_shelf(OS%grid, OS%flux_tmp, OS%use_ice_shelf,OS%density_iceberg,OS%kv_iceberg, OS%latent_heat_fusion, OS%State, time_step, OS%berg_area_threshold)
     endif
-  
+
     call forcing_accumulate(OS%flux_tmp, OS%fluxes, time_step, OS%grid, weight)
 #ifdef _USE_GENERIC_TRACER
     call MOM_generic_tracer_fluxes_accumulate(OS%flux_tmp, weight) !weight of the current flux in the running average
@@ -456,7 +460,7 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, &
 
   if (OS%nstep==0) then
     call finish_MOM_initialization(OS%Time, OS%dirs, OS%MOM_CSp, OS%fluxes)
-      
+
     call write_energy(OS%MOM_CSp%u, OS%MOM_CSp%v, OS%MOM_CSp%h, OS%MOM_CSp%tv, &
                       OS%Time, 0, OS%grid, OS%GV, OS%sum_output_CSp, &
                       OS%MOM_CSp%tracer_flow_CSp)
@@ -465,7 +469,11 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, &
   call disable_averaging(OS%MOM_CSp%diag)
   Master_time = OS%Time ; Time1 = OS%Time
 
-  call step_MOM(OS%fluxes, OS%state, Time1, time_step, OS%MOM_CSp)
+  if(OS%MOM_Csp%offline_tracer_mode) then
+    call step_tracers(OS%fluxes, OS%state, Time1, time_step, OS%MOM_CSp)
+  else
+    call step_MOM(OS%fluxes, OS%state, Time1, time_step, OS%MOM_CSp)
+  endif
 
   OS%Time = Master_time + Ocean_coupling_time_step
   OS%nstep = OS%nstep + 1
@@ -507,15 +515,15 @@ end subroutine update_ocean_model
 !
 ! <DESCRIPTION>
 ! write out restart file.
-! Arguments: 
-!   timestamp (optional, intent(in)) : A character string that represents the model time, 
+! Arguments:
+!   timestamp (optional, intent(in)) : A character string that represents the model time,
 !                                      used for writing restart. timestamp will append to
-!                                      the any restart file name as a prefix. 
+!                                      the any restart file name as a prefix.
 ! </DESCRIPTION>
 !
 
 subroutine add_berg_flux_to_shelf(G, fluxes, use_ice_shelf, density_ice, kv_ice, latent_heat_fusion, state, time_step, berg_area_threshold)
-  type(ocean_grid_type),              intent(inout)    :: G
+  type(ocean_grid_type),              intent(inout)    :: G    !< The ocean's grid structure
   type(forcing),                      intent(inout) :: fluxes
   type(surface),                      intent(inout) :: state
   logical,                            intent(in) :: use_ice_shelf
@@ -553,7 +561,7 @@ subroutine add_berg_flux_to_shelf(G, fluxes, use_ice_shelf, density_ice, kv_ice,
 
     do j=jsd,jed ; do i=isd,ied
       if (G%areaT(i,j) > 0.0) &
-        fluxes%frac_shelf_h(i,j) = fluxes%frac_shelf_h(i,j) +  fluxes%area_berg(i,j) 
+        fluxes%frac_shelf_h(i,j) = fluxes%frac_shelf_h(i,j) +  fluxes%area_berg(i,j)
         fluxes%ustar_shelf(i,j)  = fluxes%ustar_shelf(i,j)  +  fluxes%ustar_berg(i,j)
     enddo ; enddo
     !do I=isd,ied-1 ; do j=isd,jed
@@ -566,7 +574,7 @@ subroutine add_berg_flux_to_shelf(G, fluxes, use_ice_shelf, density_ice, kv_ice,
                                     min(fluxes%mass_berg(i,j), fluxes%mass_berg(i+1,j)))
     enddo ; enddo
     do j=jsd,jed-1 ; do i=isd,ied ! ### change stride order; j->jed-1?
-    !do i=isd,ied ; do J=isd,jed-1 
+    !do i=isd,ied ; do J=isd,jed-1
       fluxes%frac_shelf_v(i,J) = 0.0
       if ((G%areaT(i,j) + G%areaT(i,j+1) > 0.0)) & ! .and. (G%dxdy_v(i,J) > 0.0)) &
         fluxes%frac_shelf_v(i,J) = fluxes%frac_shelf_v(i,J) + (((fluxes%area_berg(i,j)*G%areaT(i,j)) + (fluxes%area_berg(i,j+1)*G%areaT(i,j+1))) / &
@@ -575,12 +583,12 @@ subroutine add_berg_flux_to_shelf(G, fluxes, use_ice_shelf, density_ice, kv_ice,
                                    max(fluxes%mass_berg(i,j), fluxes%mass_berg(i,j+1)))
     enddo ; enddo
     call pass_vector(fluxes%frac_shelf_u, fluxes%frac_shelf_v, G%domain, TO_ALL, CGRID_NE)
-    
-    !Zero'ing out other fluxes under the tabular icebergs 
+
+    !Zero'ing out other fluxes under the tabular icebergs
     if (berg_area_threshold >= 0.) then
       do j=jsd,jed ; do i=isd,ied
         if (fluxes%frac_shelf_h(i,j) > berg_area_threshold) then  !Only applying for ice shelf covering most of cell
-            
+
           if (associated(fluxes%sw)) fluxes%sw(i,j) = 0.0
           if (associated(fluxes%lw)) fluxes%lw(i,j) = 0.0
           if (associated(fluxes%latent)) fluxes%latent(i,j) = 0.0
@@ -635,7 +643,7 @@ subroutine ocean_model_restart(OS, timestamp)
         call  ice_shelf_save_restart(OS%Ice_shelf_CSp, OS%Time, OS%dirs%restart_output_dir)
      endif
    endif
-  
+
 end subroutine ocean_model_restart
 ! </SUBROUTINE> NAME="ocean_model_restart"
 
@@ -705,9 +713,10 @@ end subroutine ocean_model_save_restart
 
 !=======================================================================
 
-subroutine initialize_ocean_public_type(input_domain, Ocean_sfc, maskmap)
+subroutine initialize_ocean_public_type(input_domain, Ocean_sfc, diag, maskmap)
   type(domain2D), intent(in)             :: input_domain
   type(ocean_public_type), intent(inout) :: Ocean_sfc
+  type(diag_ctrl), intent(in)            :: diag
   logical, intent(in), optional          :: maskmap(:,:)
   integer :: xsz, ysz, layout(2)
   ! ice-ocean-boundary fields are always allocated using absolute indicies
@@ -739,13 +748,14 @@ subroutine initialize_ocean_public_type(input_domain, Ocean_sfc, maskmap)
   Ocean_sfc%sea_lev = 0.0  ! time averaged thickness of top model grid cell (m) plus patm/rho0/grav
   Ocean_sfc%frazil  = 0.0  ! time accumulated frazil (J/m^2) passed to ice model
   Ocean_sfc%area    = 0.0
+  Ocean_sfc%axes    = diag%axesT1%handles !diag axes to be used by coupler tracer flux diagnostics
 
 end subroutine initialize_ocean_public_type
 
 subroutine convert_state_to_ocean_type(state, Ocean_sfc, G, use_conT_absS, patm, press_to_z)
   type(surface),           intent(inout) :: state
   type(ocean_public_type), target, intent(inout) :: Ocean_sfc
-  type(ocean_grid_type),   intent(inout) :: G
+  type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure
   logical,                 intent(in)    :: use_conT_absS
   real,          optional, intent(in)    :: patm(:,:)
   real,          optional, intent(in)    :: press_to_z
@@ -758,7 +768,7 @@ subroutine convert_state_to_ocean_type(state, Ocean_sfc, G, use_conT_absS, patm,
   character(len=48)  :: val_str
   integer :: isc_bnd, iec_bnd, jsc_bnd, jec_bnd
   integer :: i, j, i0, j0, is, ie, js, je
- 
+
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
   call pass_vector(state%u,state%v,G%Domain)
 
@@ -773,7 +783,7 @@ subroutine convert_state_to_ocean_type(state, Ocean_sfc, G, use_conT_absS, patm,
   i0 = is - isc_bnd ; j0 = js - jsc_bnd
   !If directed convert the surface T&S
   !from conservative T to potential T and
-  !from absolute (reference) salinity to practical salinity 
+  !from absolute (reference) salinity to practical salinity
   !
   if(use_conT_absS) then
     do j=jsc_bnd,jec_bnd ; do i=isc_bnd,iec_bnd
@@ -793,9 +803,9 @@ subroutine convert_state_to_ocean_type(state, Ocean_sfc, G, use_conT_absS, patm,
       Ocean_sfc%sea_lev(i,j) = Ocean_sfc%sea_lev(i,j) + patm(i,j) * press_to_z
       if (associated(state%frazil)) &
       Ocean_sfc%frazil(i,j) = state%frazil(i+i0,j+j0)
-    Ocean_sfc%area(i,j)   =  G%areaT(i+i0,j+j0)  
+    Ocean_sfc%area(i,j)   =  G%areaT(i+i0,j+j0)
   enddo ; enddo
-  
+
   if (Ocean_sfc%stagger == AGRID) then
     do j=jsc_bnd,jec_bnd ; do i=isc_bnd,iec_bnd
       Ocean_sfc%u_surf(i,j) = G%mask2dT(i+i0,j+j0)*0.5*(state%u(I+i0,j+j0)+state%u(I-1+i0,j+j0))
@@ -819,7 +829,7 @@ subroutine convert_state_to_ocean_type(state, Ocean_sfc, G, use_conT_absS, patm,
 
   if (.not.associated(state%tr_fields,Ocean_sfc%fields)) &
     call MOM_error(FATAL,'state%tr_fields is not pointing to Ocean_sfc%fields')
-  
+
 end subroutine convert_state_to_ocean_type
 
 
@@ -856,11 +866,11 @@ end subroutine ocean_model_init_sfc
 ! UPDATE May, 8 2007
 ! added aof_set_couple_flux function calls to this routine. These calls
 ! are only made by non Ocean PEs and only when CFCs are being used (though
-! this condition may expand. These calls are normally done during 
+! this condition may expand. These calls are normally done during
 ! ocean_model_init. The problem is that they are only done by Ocean PEs. All
 ! processors need to make this call in order to get the number of ocean/atmos
-! fluxes correct in the coupler framework. 
-! The trick now is to let the atmos pes know when there is no CFCs and not 
+! fluxes correct in the coupler framework.
+! The trick now is to let the atmos pes know when there is no CFCs and not
 ! to call aof_set_coupler_flux
 !WGA
 
@@ -870,7 +880,7 @@ subroutine ocean_model_flux_init(OS)
   character(len=128) :: default_ice_restart_file, default_ocean_restart_file
   character(len=40)  :: mod = "ocean_model_flux_init"  ! This module's name.
 
-  type(param_file_type) :: param_file
+  type(param_file_type) :: param_file !< A structure to parse for run-time parameters
   type(directories) :: dirs_tmp  ! A structure containing several relevant directory paths.
   logical :: use_OCMIP_CFCs, use_MOM_generic_tracer
 
@@ -900,7 +910,7 @@ subroutine ocean_model_flux_init(OS)
         ice_restart_file = default_ice_restart_file, &
         ocean_restart_file = default_ocean_restart_file, &
         caller = "register_OCMIP2_CFC")
-    endif 
+    endif
   endif
 
   if (use_MOM_generic_tracer) then
@@ -911,7 +921,7 @@ subroutine ocean_model_flux_init(OS)
        "call_tracer_register: use_MOM_generic_tracer=.true. BUT not compiled with _USE_GENERIC_TRACER")
 #endif
   endif
-    
+
 end subroutine ocean_model_flux_init
 
 !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
@@ -934,7 +944,7 @@ subroutine Ocean_stock_pe(OS, index, value, time_index)
   value = 0.0
   if (.not.associated(OS)) return
   if (.not.OS%is_ocean_pe) return
-  
+
   is = OS%grid%isc ; ie = OS%grid%iec
   js = OS%grid%jsc ; je = OS%grid%jec ; nz = OS%grid%ke
 
@@ -986,20 +996,20 @@ subroutine ocean_model_data2D_get(OS,Ocean, name, array2D,isc,jsc)
 
   if (.not.associated(OS)) return
   if (.not.OS%is_ocean_pe) return
-  
+
 ! The problem is %areaT is on MOM domain but Ice_Ocean_Boundary%... is on mpp domain.
 ! We want to return the MOM data on the mpp (compute) domain
-! Get MOM domain extents 
+! Get MOM domain extents
   call mpp_get_compute_domain(OS%grid%Domain%mpp_domain, g_isc, g_iec, g_jsc, g_jec)
   call mpp_get_data_domain   (OS%grid%Domain%mpp_domain, g_isd, g_ied, g_jsd, g_jed)
 
   g_isc = g_isc-g_isd+1 ; g_iec = g_iec-g_isd+1 ; g_jsc = g_jsc-g_jsd+1 ; g_jec = g_jec-g_jsd+1
- 
+
 
   select case(name)
   case('area')
      array2D(isc:,jsc:) = OS%grid%areaT(g_isc:g_iec,g_jsc:g_jec)
-  case('mask')     
+  case('mask')
      array2D(isc:,jsc:) = OS%grid%mask2dT(g_isc:g_iec,g_jsc:g_jec)
 !OR same result
 !     do j=g_jsc,g_jec; do i=g_isc,g_iec
@@ -1018,7 +1028,7 @@ subroutine ocean_model_data2D_get(OS,Ocean, name, array2D,isc,jsc)
   case default
      call MOM_error(FATAL,'get_ocean_grid_data2D: unknown argument name='//name)
   end select
-  
+
 
 end subroutine ocean_model_data2D_get
 
@@ -1027,7 +1037,7 @@ subroutine ocean_model_data1D_get(OS,Ocean, name, value)
   type(ocean_public_type),    intent(in) :: Ocean
   character(len=*)          , intent(in) :: name
   real                      , intent(out):: value
-  
+
   if (.not.associated(OS)) return
   if (.not.OS%is_ocean_pe) return
 
@@ -1037,7 +1047,7 @@ subroutine ocean_model_data1D_get(OS,Ocean, name, value)
   case default
      call MOM_error(FATAL,'get_ocean_grid_data1D: unknown argument name='//name)
   end select
-  
+
 
 end subroutine ocean_model_data1D_get
 
@@ -1046,8 +1056,8 @@ subroutine ocean_public_type_chksum(id, timestep, ocn)
     character(len=*), intent(in) :: id
     integer         , intent(in) :: timestep
     type(ocean_public_type), intent(in) :: ocn
-    integer ::   n,m, outunit 
- 
+    integer ::   n,m, outunit
+
     outunit = stdout()
 
     write(outunit,*) "BEGIN CHECKSUM(ocean_type):: ", id, timestep

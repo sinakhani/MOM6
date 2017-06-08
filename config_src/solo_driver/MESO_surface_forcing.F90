@@ -117,7 +117,7 @@ subroutine MESO_wind_forcing(state, fluxes, day, G, CS)
   type(surface),                 intent(inout) :: state
   type(forcing),                 intent(inout) :: fluxes
   type(time_type),               intent(in)    :: day
-  type(ocean_grid_type),         intent(inout) :: G
+  type(ocean_grid_type),         intent(inout) :: G    !< The ocean's grid structure
   type(MESO_surface_forcing_CS), pointer       :: CS
 
 !   This subroutine sets the surface wind stresses, fluxes%taux and fluxes%tauy.
@@ -179,7 +179,7 @@ subroutine MESO_buoyancy_forcing(state, fluxes, day, dt, G, CS)
   type(forcing),                 intent(inout) :: fluxes
   type(time_type),               intent(in)    :: day
   real,                          intent(in)    :: dt
-  type(ocean_grid_type),         intent(in)    :: G
+  type(ocean_grid_type),         intent(in)    :: G    !< The ocean's grid structure
   type(MESO_surface_forcing_CS), pointer       :: CS
 
 !    This subroutine specifies the current surface fluxes of buoyancy or
@@ -191,7 +191,7 @@ subroutine MESO_buoyancy_forcing(state, fluxes, day, dt, G, CS)
 !  can be simply set to zero.  The net fresh water flux should probably be
 !  set in fluxes%evap and fluxes%lprec, with any salinity restoring
 !  appearing in fluxes%vprec, and the other water flux components
-!  (fprec, lrunoff and frunoff) left as arrays full of zeros. 
+!  (fprec, lrunoff and frunoff) left as arrays full of zeros.
 !  Evap is usually negative and precip is usually positive.  All heat fluxes
 !  are in W m-2 and positive for heat going into the ocean.  All fresh water
 !  fluxes are in kg m-2 s-1 and positive for water moving into the ocean.
@@ -349,8 +349,8 @@ end subroutine alloc_if_needed
 
 subroutine MESO_surface_forcing_init(Time, G, param_file, diag, CS)
   type(time_type),               intent(in) :: Time
-  type(ocean_grid_type),         intent(in) :: G
-  type(param_file_type),         intent(in) :: param_file
+  type(ocean_grid_type),         intent(in) :: G    !< The ocean's grid structure
+  type(param_file_type),         intent(in) :: param_file !< A structure to parse for run-time parameters
   type(diag_ctrl), target,       intent(in) :: diag
   type(MESO_surface_forcing_CS), pointer    :: CS
 ! Arguments: Time - The current model time.

@@ -88,7 +88,7 @@ implicit none ; private
 
 public call_tracer_register, tracer_flow_control_init, call_tracer_set_forcing
 public call_tracer_column_fns, call_tracer_surface_state, call_tracer_stocks
-public get_chl_from_model
+public get_chl_from_model, tracer_flow_control_end
 
 type, public :: tracer_flow_control_CS ; private
   logical :: use_USER_tracer_example = .false.
@@ -125,8 +125,8 @@ contains
 
 subroutine call_tracer_register(HI, GV, param_file, CS, tr_Reg, restart_CS)
   type(hor_index_type),         intent(in) :: HI
-  type(verticalGrid_type),      intent(in) :: GV
-  type(param_file_type),        intent(in) :: param_file
+  type(verticalGrid_type),      intent(in) :: GV   !< The ocean's vertical grid structure
+  type(param_file_type),        intent(in) :: param_file !< A structure to parse for run-time parameters
   type(tracer_flow_control_CS), pointer    :: CS
   type(tracer_registry_type),   pointer    :: tr_Reg
   type(MOM_restart_CS),         pointer    :: restart_CS
@@ -232,7 +232,7 @@ subroutine call_tracer_register(HI, GV, param_file, CS, tr_Reg, restart_CS)
   if (CS%use_boundary_impulse_tracer) CS%use_boundary_impulse_tracer = &
     register_boundary_impulse_tracer(HI, GV, param_file,  CS%boundary_impulse_tracer_CSp, &
                         tr_Reg, restart_CS)
-                        
+
 
 end subroutine call_tracer_register
 
@@ -240,10 +240,10 @@ subroutine tracer_flow_control_init(restart, day, G, GV, h, param_file, diag, OB
                                 CS, sponge_CSp, ALE_sponge_CSp, diag_to_Z_CSp, tv)
   logical,                               intent(in) :: restart
   type(time_type), target,               intent(in) :: day
-  type(ocean_grid_type),                 intent(inout) :: G
-  type(verticalGrid_type),               intent(in) :: GV
-  real, dimension(NIMEM_,NJMEM_,NKMEM_), intent(in) :: h
-  type(param_file_type),                 intent(in) :: param_file
+  type(ocean_grid_type),                 intent(inout) :: G    !< The ocean's grid structure
+  type(verticalGrid_type),               intent(in) :: GV   !< The ocean's vertical grid structure
+  real, dimension(NIMEM_,NJMEM_,NKMEM_), intent(in) :: h    !< Layer thicknesses, in H (usually m or kg m-2)
+  type(param_file_type),                 intent(in) :: param_file !< A structure to parse for run-time parameters
   type(diag_ctrl), target,               intent(in) :: diag
   type(ocean_OBC_type),                  pointer    :: OBC
   type(tracer_flow_control_CS),          pointer    :: CS
@@ -308,13 +308,13 @@ subroutine tracer_flow_control_init(restart, day, G, GV, h, param_file, diag, OB
                                 sponge_CSp, diag_to_Z_CSp, tv)
   if (CS%use_boundary_impulse_tracer) &
     call initialize_boundary_impulse_tracer(restart, day, G, GV, h, diag, OBC, CS%boundary_impulse_tracer_CSp, &
-                                sponge_CSp, diag_to_Z_CSp, tv)                                
+                                sponge_CSp, diag_to_Z_CSp, tv)
 
 end subroutine tracer_flow_control_init
 
 subroutine get_chl_from_model(Chl_array, G, CS)
   real, dimension(NIMEM_,NJMEM_,NKMEM_), intent(out) :: Chl_array
-  type(ocean_grid_type),                 intent(in)  :: G
+  type(ocean_grid_type),                 intent(in)  :: G    !< The ocean's grid structure
   type(tracer_flow_control_CS),          pointer     :: CS
 ! Arguments: Chl_array - The array into which the model's Chlorophyll-A
 !                        concentrations in mg m-3 are to be read.
@@ -329,7 +329,7 @@ subroutine get_chl_from_model(Chl_array, G, CS)
     call MOM_error(FATAL, "get_chl_from_model was called in a configuration "// &
              "that is unable to provide a sensible model-based value.\n"// &
              "CS%use_MOM_generic_tracer is false and no other viable options are on.")
-  endif  
+  endif
 #else
   call MOM_error(FATAL, "get_chl_from_model was called in a configuration "// &
            "that is unable to provide a sensible model-based value.\n"// &
@@ -345,7 +345,7 @@ subroutine call_tracer_set_forcing(state, fluxes, day_start, day_interval, G, CS
   type(forcing),                intent(inout) :: fluxes
   type(time_type),              intent(in)    :: day_start
   type(time_type),              intent(in)    :: day_interval
-  type(ocean_grid_type),        intent(in)    :: G
+  type(ocean_grid_type),        intent(in)    :: G    !< The ocean's grid structure
   type(tracer_flow_control_CS), pointer       :: CS
 !   This subroutine calls the individual tracer modules' subroutines to
 ! specify or read quantities related to their surface forcing.
@@ -368,20 +368,21 @@ subroutine call_tracer_set_forcing(state, fluxes, day_start, day_interval, G, CS
 
 end subroutine call_tracer_set_forcing
 
-subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, dt, G, GV, tv, optics, CS, &
+subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, Hml, dt, G, GV, tv, optics, CS, &
                                   debug, evap_CFL_limit, minimum_forcing_depth)
   real, dimension(NIMEM_,NJMEM_,NKMEM_), intent(in) :: h_old, h_new, ea, eb
   type(forcing),                         intent(in) :: fluxes
+  real, dimension(NIMEM_,NJMEM_),        intent(in) :: Hml !< Mixed layer depth (m)
   real,                                  intent(in) :: dt
-  type(ocean_grid_type),                 intent(in) :: G
-  type(verticalGrid_type),               intent(in) :: GV
+  type(ocean_grid_type),                 intent(in) :: G    !< The ocean's grid structure
+  type(verticalGrid_type),               intent(in) :: GV   !< The ocean's vertical grid structure
   type(thermo_var_ptrs),                 intent(in) :: tv
   type(optics_type),                     pointer    :: optics
   type(tracer_flow_control_CS),          pointer    :: CS
   logical,                               intent(in) :: debug
   real,                             optional,intent(in)  :: evap_CFL_limit
   real,                             optional,intent(in)  :: minimum_forcing_depth
-  
+
 !   This subroutine calls all registered tracer column physics
 ! subroutines.
 
@@ -404,10 +405,10 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, dt, G, GV, tv, o
 !  (in)      CS - The control structure returned by a previous call to
 !                 call_tracer_register.
 !  (in)      evap_CFL_limit - Limits how much water can be fluxed out of the top layer
-!                             Stored previously in diabatic CS.  
+!                             Stored previously in diabatic CS.
 !  (in)      minimum_forcing_depth - The smallest depth over which fluxes can be applied
-!                             Stored previously in diabatic CS.  
-!  (in)      debug - Calculates checksums     
+!                             Stored previously in diabatic CS.
+!  (in)      debug - Calculates checksums
 
   if (.not. associated(CS)) call MOM_error(FATAL, "call_tracer_column_fns: "// &
          "Module must be initialized via call_tracer_register before it is used.")
@@ -456,7 +457,7 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, dt, G, GV, tv, o
                                      minimum_forcing_depth=minimum_forcing_depth)
 #ifdef _USE_GENERIC_TRACER
     if (CS%use_MOM_generic_tracer) &
-      call MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, &
+      call MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, Hml, dt, &
                                              G, GV, CS%MOM_generic_tracer_CSp, tv, optics, &
                                              evap_CFL_limit=evap_CFL_limit, &
                                              minimum_forcing_depth=minimum_forcing_depth)
@@ -500,7 +501,7 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, dt, G, GV, tv, o
                                      G, GV, CS%OCMIP2_CFC_CSp)
 #ifdef _USE_GENERIC_TRACER
     if (CS%use_MOM_generic_tracer) &
-      call MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, &
+      call MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, Hml, dt, &
                                      G, GV, CS%MOM_generic_tracer_CSp, tv, optics)
 #endif
     if (CS%use_pseudo_salt_tracer) &
@@ -508,7 +509,7 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, dt, G, GV, tv, o
                                      G, GV, CS%pseudo_salt_tracer_CSp, tv, debug)
     if (CS%use_boundary_impulse_tracer) &
       call boundary_impulse_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, &
-                                     G, GV, CS%boundary_impulse_tracer_CSp, tv, debug)                                     
+                                     G, GV, CS%boundary_impulse_tracer_CSp, tv, debug)
 
 
   endif
@@ -519,10 +520,10 @@ end subroutine call_tracer_column_fns
 
 subroutine call_tracer_stocks(h, stock_values, G, GV, CS, stock_names, stock_units, &
                               num_stocks, stock_index, got_min_max,global_min,  global_max,xgmin, ygmin, zgmin, xgmax, ygmax, zgmax)
-  real, dimension(NIMEM_,NJMEM_,NKMEM_),    intent(in)  :: h
+  real, dimension(NIMEM_,NJMEM_,NKMEM_),    intent(in)  :: h    !< Layer thicknesses, in H (usually m or kg m-2)
   real, dimension(:),                       intent(out) :: stock_values
-  type(ocean_grid_type),                    intent(in)  :: G
-  type(verticalGrid_type),                  intent(in)  :: GV
+  type(ocean_grid_type),                    intent(in)  :: G    !< The ocean's grid structure
+  type(verticalGrid_type),                  intent(in)  :: GV   !< The ocean's vertical grid structure
   type(tracer_flow_control_CS),             pointer     :: CS
   character(len=*), dimension(:), optional, intent(out) :: stock_names
   character(len=*), dimension(:), optional, intent(out) :: stock_units
@@ -613,7 +614,7 @@ subroutine call_tracer_stocks(h, stock_values, G, GV, CS, stock_names, stock_uni
                        set_pkg_name, max_ns, ns_tot, stock_names, stock_units)
     nn=ns_tot-ns+1
     nn=MOM_generic_tracer_min_max(nn, got_min_max, global_min,  global_max, xgmin, ygmin, zgmin, xgmax, ygmax, zgmax ,&
-                                     G, CS%MOM_generic_tracer_CSp,names, units)   
+                                     G, CS%MOM_generic_tracer_CSp,names, units)
 
   endif
 #endif
@@ -629,14 +630,14 @@ subroutine call_tracer_stocks(h, stock_values, G, GV, CS, stock_names, stock_uni
                          names, units, stock_index)
     call store_stocks("boundary_impulse_tracer", ns, names, units, values, index, &
            stock_values, set_pkg_name, max_ns, ns_tot, stock_names, stock_units)
-  endif  
-  
+  endif
+
   if (ns_tot == 0) stock_values(1) = 0.0
 
   if (present(num_stocks)) num_stocks = ns_tot
 
 end subroutine call_tracer_stocks
-  
+
 subroutine store_stocks(pkg_name, ns, names, units, values, index, stock_values, &
                         set_pkg_name, max_ns, ns_tot, stock_names, stock_units)
   character(len=*),                         intent(in)    :: pkg_name
@@ -670,7 +671,7 @@ subroutine store_stocks(pkg_name, ns, names, units, values, index, stock_values,
   endif
 
   if (ns_tot+ns > max_ns) then
-    write(ns_text,'(i8)') ns_tot+ns ; write(max_text,'(i8)') max_ns 
+    write(ns_text,'(i8)') ns_tot+ns ; write(max_text,'(i8)') max_ns
     call MOM_error(FATAL,"Attempted to return more tracer stock values (at least "//&
       trim(adjustl(ns_text))//") than the size "//trim(adjustl(max_text))//&
       "of the smallest value, name, or units array.")
@@ -687,8 +688,8 @@ end subroutine store_stocks
 
 subroutine call_tracer_surface_state(state, h, G, CS)
   type(surface),                         intent(inout) :: state
-  real, dimension(NIMEM_,NJMEM_,NKMEM_), intent(in) :: h
-  type(ocean_grid_type),                 intent(in) :: G
+  real, dimension(NIMEM_,NJMEM_,NKMEM_), intent(in) :: h    !< Layer thicknesses, in H (usually m or kg m-2)
+  type(ocean_grid_type),                 intent(in) :: G    !< The ocean's grid structure
   type(tracer_flow_control_CS),          pointer    :: CS
 !   This subroutine calls all registered tracer packages to enable them to
 ! add to the surface state returned to the coupler. These routines are optional.

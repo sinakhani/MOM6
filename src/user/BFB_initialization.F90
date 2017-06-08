@@ -48,14 +48,14 @@ use MOM_io, only : open_file, read_data, read_axis_data, SINGLE_FILE
 use MOM_io, only : write_field, slasher
 use MOM_sponge, only : set_up_sponge_field, initialize_sponge, sponge_CS
 use MOM_tracer_registry, only : tracer_registry_type, add_tracer_OBC_values
-use MOM_variables, only : thermo_var_ptrs 
+use MOM_variables, only : thermo_var_ptrs
 use MOM_EOS, only : calculate_density, calculate_density_derivs, EOS_type
 use MOM_verticalGrid, only : verticalGrid_type
 implicit none ; private
 
 #include <MOM_memory.h>
 
-public BFB_set_coord 
+public BFB_set_coord
 public BFB_initialize_sponges_southonly
 
 logical :: first_call = .true.
@@ -67,8 +67,8 @@ subroutine BFB_set_coord(Rlay, g_prime, GV, param_file, eqn_of_state)
 ! such a way that the temperature of the topmost layer is equal to the SST at the southern edge of the domain. The temperatures are
 ! then converted to densities of the top and bottom layers and linearly interpolated for the intermediate layers.
   real, dimension(NKMEM_), intent(out) :: Rlay, g_prime
-  type(verticalGrid_type), intent(in)  :: GV
-  type(param_file_type),   intent(in)  :: param_file
+  type(verticalGrid_type), intent(in)  :: GV   !< The ocean's vertical grid structure
+  type(param_file_type),   intent(in)  :: param_file !< A structure to parse for run-time parameters
   type(EOS_type),          pointer     :: eqn_of_state
   real                                 :: drho_dt, SST_s, T_bot, rho_top, rho_bot
   integer                              :: k, nz
@@ -98,20 +98,20 @@ subroutine BFB_set_coord(Rlay, g_prime, GV, param_file, eqn_of_state)
     !Rlay(:) = 0.0
     !g_prime(:) = 0.0
   end do
- 
+
   if (first_call) call write_BFB_log(param_file)
 
 end subroutine BFB_set_coord
 
 subroutine BFB_initialize_sponges_southonly(G, use_temperature, tv, param_file, CSp, h)
 ! This subroutine sets up the sponges for the southern bouundary of the domain. Maximum damping occurs within 2 degrees lat of the
-! boundary. The damping linearly decreases northward over the next 2 degrees. 
-  type(ocean_grid_type), intent(in)                   :: G
+! boundary. The damping linearly decreases northward over the next 2 degrees.
+  type(ocean_grid_type), intent(in)                   :: G    !< The ocean's grid structure
   logical,               intent(in)                   :: use_temperature
   type(thermo_var_ptrs), intent(in)                   :: tv
-  type(param_file_type), intent(in)                   :: param_file
+  type(param_file_type), intent(in)                   :: param_file !< A structure to parse for run-time parameters
   type(sponge_CS),       pointer                      :: CSp
-  real, dimension(NIMEM_, NJMEM_, NKMEM_), intent(in) :: h
+  real, dimension(NIMEM_, NJMEM_, NKMEM_), intent(in) :: h    !< Layer thicknesses, in H (usually m or kg m-2)
   !call MOM_error(FATAL, &
   ! "BFB_initialization.F90, BFB_initialize_sponges: " // &
   ! "Unmodified user routine called - you must edit the routine to use it")
@@ -138,11 +138,11 @@ subroutine BFB_initialize_sponges_southonly(G, use_temperature, tv, param_file, 
 !   Set up sponges for DOME configuration
   call get_param(param_file, mod, "MINIMUM_DEPTH", min_depth, &
                  "The minimum depth of the ocean.", units="m", default=0.0)
-  
+
   call get_param(param_file, mod, "SOUTHLAT", slat, &
                  "The southern latitude of the domain.", units="degrees")
   call get_param(param_file, mod, "LENLAT", lenlat, &
-                 "The latitudinal length of the domain.", units="degrees") 
+                 "The latitudinal length of the domain.", units="degrees")
   call get_param(param_file, mod, "WESTLON", wlon, &
                  "The western longitude of the domain.", units="degrees", default=0.0)
   call get_param(param_file, mod, "LENLON", lenlon, &
