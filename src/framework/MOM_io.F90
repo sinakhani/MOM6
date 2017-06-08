@@ -503,7 +503,7 @@ function num_timelevels(filename, varname, min_dims) result(n_time)
 
   allocate(varids(nvars))
 
-  status = nf90_inq_varids(ncid, nvars, varids)
+  !status = nf90_inq_varids(ncid, nvars, varids)
   if (status /= NF90_NOERR) then
     call MOM_error(WARNING,"num_timelevels: "//&
         " Difficulties getting the variable IDs in file "//&
