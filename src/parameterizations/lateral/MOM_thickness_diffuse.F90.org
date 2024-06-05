@@ -38,8 +38,6 @@ type, public :: thickness_diffuse_CS ; private
   logical :: initialized = .false. !< True if this control structure has been initialized.
   real    :: Khth                !< Background isopycnal depth diffusivity [L2 T-1 ~> m2 s-1]
   real    :: Khth_Slope_Cff      !< Slope dependence coefficient of Khth [nondim]
-  real    :: Grad_Lu_Scale	 !< Gradient model coefficient on u-point [nondim]
-  real    :: Grad_Lv_Scale	 !< Gradient model coefficient on v-point [nondim] 
   real    :: max_Khth_CFL        !< Maximum value of the diffusive CFL for isopycnal height diffusion [nondim]
   real    :: Khth_Min            !< Minimum value of Khth [L2 T-1 ~> m2 s-1]
   real    :: Khth_Max            !< Maximum value of Khth [L2 T-1 ~> m2 s-1], or 0 for no max
@@ -314,17 +312,6 @@ subroutine thickness_diffuse(h, uhtr, vhtr, tv, dt, G, GV, US, MEKE, VarMix, CDp
     endif
   endif
 
-  if (use_VarMix) then
-    if (CS%KHTH_Slope_Cff > 0.0) then
-      !$OMP do
-      do k=1,nz ; do j=js,je ; do I=is-1,ie
-        KH_u(I,j,k) = 1.0*CS%KHTH_Slope_Cff*VarMix%L2grad_u(I,j)*VarMix%UH_grad(I,j,k)
-        !KH_u(I,j,k) = CS%KHTH_Slope_Cff*VarMix%L2grad_u(I,j)*VarMix%UH_grad(I,j,k)
-      enddo ; enddo ; enddo
-    endif
-  endif
-
-
   if (CS%use_GME_thickness_diffuse) then
     !$OMP do
     do k=1,nz+1 ; do j=js,je ; do I=is-1,ie
@@ -421,16 +408,6 @@ subroutine thickness_diffuse(h, uhtr, vhtr, tv, dt, G, GV, US, MEKE, VarMix, CDp
     endif
   endif
 
-  if (use_VarMix) then
-    if (CS%KHTH_Slope_Cff > 0.0) then  !< Gradient model
-      !$OMP do
-      do k=1,nz ; do J=js-1,je ; do i=is,ie
-        KH_v(i,J,k) = 1.0*CS%KHTH_Slope_Cff*VarMix%L2grad_v(i,J)*VarMix%VH_grad(i,J,k)
-        !KH_v(i,J,k) = 0.01*VarMix%L2grad_v(i,J)*VarMix%VH_grad(i,J,k)
-      enddo ; enddo ; enddo
-    endif
-  endif
-  
   if (CS%use_GME_thickness_diffuse) then
     !$OMP do
     do k=1,nz+1 ; do J=js-1,je ; do i=is,ie
@@ -2154,12 +2131,6 @@ subroutine thickness_diffuse_init(Time, G, GV, US, param_file, diag, CDp, CS)
   call get_param(param_file, mdl, "KHTH_SLOPE_CFF", CS%KHTH_Slope_Cff, &
                  "The nondimensional coefficient in the Visbeck formula for "//&
                  "the interface depth diffusivity", units="nondim", default=0.0)
-  call get_param(param_file, mdl, "GRAD_LU_SCALE", CS%GRAD_LU_Scale, &
-                 "The nondimensional coefficient in the Gradient model u-point  for "//&
-                 "the thickness depth diffusivity", units="nondim", default=1.0)
-  call get_param(param_file, mdl, "KHTH_LV_SCALE", CS%GRAD_LV_Scale, &
-                 "The nondimensional coefficient in the Gradient model v-point for "//&
-                 "the thickness depth diffusivity", units="nondim", default=1.0)
   call get_param(param_file, mdl, "KHTH_MIN", CS%KHTH_Min, &
                  "The minimum horizontal thickness diffusivity.", &
                  default=0.0, units="m2 s-1", scale=US%m_to_L**2*US%T_to_s)
