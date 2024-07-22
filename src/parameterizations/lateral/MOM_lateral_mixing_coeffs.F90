@@ -892,7 +892,7 @@ subroutine calc_slope_functions_using_just_e(h, G, GV, US, CS, e, uh, vh, calcul
   do j=js,je ; do I=is-1,ie
 !    CS%L2u(I,j) = CS%Visbeck_L_scale**2
     Lgrid = sqrt(G%dxCu(I,j)**2 + G%dyCu(I,j)**2)
-!    CS%L2grad_u(I,j) = CS%grad_Lu_scale * Lgrid**2
+!    CS%L2grad_u(I,j) = CS%grad_L_scale * Lgrid**2
     CS%L2grad_u(I,j) = 1.0 * Lgrid**2 
   enddo ; enddo
   ! Set length scale at v-points
@@ -900,7 +900,7 @@ subroutine calc_slope_functions_using_just_e(h, G, GV, US, CS, e, uh, vh, calcul
   do J=js-1,je ; do i=is,ie
 !    CS%L2v(i,J) = CS%Visbeck_L_scale**2
     Lgrid = sqrt(G%dxCv(i,J)**2 + G%dyCv(i,J)**2)
-!    CS%L2grad_v(i,J) = CS%grad_Lv_scale * Lgrid**2
+!    CS%L2grad_v(i,J) = CS%grad_L_scale * Lgrid**2
     CS%L2grad_v(i,J) = 1.0 * Lgrid**2
   enddo ; enddo
 !$OMP do 
