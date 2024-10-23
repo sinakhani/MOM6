@@ -160,7 +160,8 @@ type, public :: VarMix_CS
   ! Diagnostics
   !>@{
   !! Diagnostic identifier
-  integer :: id_SN_u=-1, id_SN_v=-1, id_UH_grad=-1, id_VH_grad=-1, id_L2u=-1, id_L2v=-1, id_L2grad_u=-1, id_L2grad_v=-1, id_Res_fn = -1
+  integer :: id_SN_u=-1, id_SN_v=-1, id_L2u=-1, id_L2v=-1, id_Res_fn = -1
+  integer :: id_UH_grad=-1, id_VH_grad=-1, id_L2grad_u=-1, id_L2grad_v=-1
   integer :: id_N2_u=-1, id_N2_v=-1, id_S2_u=-1, id_S2_v=-1
   integer :: id_dzu=-1, id_dzv=-1, id_dzSxN=-1, id_dzSyN=-1
   integer :: id_Rd_dx=-1, id_KH_u_QG = -1, id_KH_v_QG = -1
