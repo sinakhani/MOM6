@@ -845,8 +845,8 @@ subroutine calc_slope_functions_using_just_e(h, G, GV, US, CS, e, uh, vh, calcul
   type(VarMix_CS),                             intent(inout) :: CS !< Variable mixing control structure
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1), intent(in)    :: e  !< Interface position [Z ~> m]
   logical,                                     intent(in)    :: calculate_slopes !< If true, calculate slopes
-                                                                                 !! internally otherwise use slopes stored in CS
-  real :: Lgrid                                                    !< Grid lengthscale for the gradient model [H ~> m] 
+                                                          !! internally otherwise use slopes stored in CS
+  real :: Lgrid                                           !< Grid lengthscale for the grad model [H ~> m] 
 
   ! Local variables
   real :: E_x(SZIB_(G),SZJ_(G))  ! X-slope of interface at u points [Z L-1 ~> nondim] (for diagnostics)
@@ -1566,8 +1566,7 @@ subroutine VarMix_init(Time, G, GV, US, param_file, diag, CS)
     allocate(CS%f2_dx2_v(isd:ied,JsdB:JedB), source=0.0)
 
     CS%id_Res_fn = register_diag_field('ocean_model', 'Res_fn', diag%axesT1, Time, &
-       'Resolution function for scaling diffusivities', 'nondim')
-   
+       'Resolution function for scaling diffusivities', 'nondim')   
     call get_param(param_file, mdl, "KH_RES_SCALE_COEF", CS%Res_coef_khth, &
                  "A coefficient that determines how KhTh is scaled away if "//&
                  "RESOLN_SCALED_... is true, as "//&
