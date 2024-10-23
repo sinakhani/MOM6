@@ -83,19 +83,21 @@ export FMS_URL
 # TODO: This needs more automated configuration
 MPIRUN ?= mpirun
 
-# Generic compiler variables are pass through to the builds
+# Generic compiler variables are passed through to the builds
 export CC
 export MPICC
 export FC
 export MPIFC
 
 # Builds are distinguished by FCFLAGS
-FCFLAGS_DEBUG ?= -g -O0
+FCFLAGS ?= -g -O0
+
+FCFLAGS_DEBUG ?= $(FCFLAGS)
 FCFLAGS_REPRO ?= -g -O2
 FCFLAGS_OPT ?= -g -O3 -mavx -fno-omit-frame-pointer
 FCFLAGS_INIT ?=
 FCFLAGS_COVERAGE ?= -g -O0 -fbacktrace --coverage
-FCFLAGS_FMS ?= $(FCFLAGS_DEBUG)
+FCFLAGS_FMS ?= $(FCFLAGS)
 # Additional notes:
 # - These default values are simple, minimalist flags, supported by nearly all
 #   compilers, and are somewhat analogous to GFDL's DEBUG and REPRO builds.
@@ -265,10 +267,12 @@ $(BUILD)/timing/Makefile: MOM_ACFLAGS += --with-driver=timing_tests
 
 
 # Build executables
+.NOTPARALLEL:$(foreach e,$(UNIT_EXECS),$(BUILD)/unit/$(e))
 $(BUILD)/unit/test_%: $(BUILD)/unit/Makefile FORCE
 	cd $(@D) && $(TIME) $(MAKE) $(@F) -j
 $(BUILD)/unit/Makefile: $(foreach e,$(UNIT_EXECS),../config_src/drivers/unit_tests/$(e).F90)
 
+.NOTPARALLEL:$(foreach e,$(TIMING_EXECS),$(BUILD)/timing/$(e))
 $(BUILD)/timing/time_%: $(BUILD)/timing/Makefile FORCE
 	cd $(@D) && $(TIME) $(MAKE) $(@F) -j
 $(BUILD)/timing/Makefile: $(foreach e,$(TIMING_EXECS),../config_src/drivers/timing_tests/$(e).F90)
@@ -278,7 +282,7 @@ $(BUILD)/%/MOM6: $(BUILD)/%/Makefile FORCE
 
 # Target codebase should use its own build system
 $(BUILD)/target/MOM6: $(BUILD)/target FORCE | $(TARGET_CODEBASE)
-	$(MAKE) -C $(TARGET_CODEBASE)/.testing build/symmetric/MOM6
+	$(MAKE) -C $(TARGET_CODEBASE)/.testing BUILD=build build/symmetric/MOM6
 
 $(BUILD)/target: | $(TARGET_CODEBASE)
 	ln -s $(abspath $(TARGET_CODEBASE))/.testing/build/symmetric $@
@@ -649,7 +653,7 @@ $(WORK)/%/restart/ocean.stats: $(BUILD)/symmetric/MOM6 | preproc
 # Not a true rule; only call this after `make test` to summarize test results.
 .PHONY: test.summary
 test.summary:
-	@./tools/report_test_results.sh $(WORK)/results
+	./tools/report_test_results.sh $(WORK)/results
 
 
 #---

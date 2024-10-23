@@ -152,6 +152,7 @@ logical function neutral_diffusion_init(Time, G, GV, US, param_file, diag, EOS, 
   logical :: debug                ! If true, write verbose checksums for debugging purposes.
   logical :: boundary_extrap      ! Indicate whether high-order boundary
                                   !! extrapolation should be used within boundary cells.
+  logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
 
   if (associated(CS)) then
     call MOM_error(FATAL, "neutral_diffusion_init called with associated control structure.")
@@ -232,8 +233,13 @@ logical function neutral_diffusion_init(Time, G, GV, US, param_file, diag, EOS, 
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date, do_not_log=.not.GV%Boussinesq)
+    call get_param(param_file, mdl, "NDIFF_REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 "If true, use the OM4 remapping-via-subcells algorithm for neutral diffusion. "//&
+                 "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
+                 "We recommend setting this option to false.", default=.true.)
     if (.not.GV%Boussinesq) CS%remap_answer_date = max(CS%remap_answer_date, 20230701)
     call initialize_remapping( CS%remap_CS, string, boundary_extrapolation=boundary_extrap, &
+                               om4_remap_via_sub_cells=om4_remap_via_sub_cells, &
                                answer_date=CS%remap_answer_date )
     call extract_member_remapping_CS(CS%remap_CS, degree=CS%deg)
     call get_param(param_file, mdl, "NEUTRAL_POS_METHOD", CS%neutral_pos_method,   &
@@ -1568,34 +1574,39 @@ real function interpolate_for_nondim_position(dRhoNeg, Pneg, dRhoPos, Ppos)
 
   character(len=120) :: mesg
 
-  if (Ppos < Pneg) then
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! Ppos<Pneg')
-  elseif (dRhoNeg>dRhoPos) then
-    write(stderr,*) 'dRhoNeg, Pneg, dRhoPos, Ppos=',dRhoNeg, Pneg, dRhoPos, Ppos
-    write(mesg,*) 'dRhoNeg, Pneg, dRhoPos, Ppos=', dRhoNeg, Pneg, dRhoPos, Ppos
-    call MOM_error(WARNING, 'interpolate_for_nondim_position: '//trim(mesg))
-  elseif (dRhoNeg>dRhoPos) then !### Does this duplicated test belong here?
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! dRhoNeg>dRhoPos')
-  endif
-  if (Ppos<=Pneg) then ! Handle vanished or inverted layers
-    interpolate_for_nondim_position = 0.5
-  elseif ( dRhoPos - dRhoNeg > 0. ) then
-    interpolate_for_nondim_position = min( 1., max( 0., -dRhoNeg / ( dRhoPos - dRhoNeg ) ) )
-  elseif ( dRhoPos - dRhoNeg == 0) then
-    if (dRhoNeg>0.) then
-      interpolate_for_nondim_position = 0.
-    elseif (dRhoNeg<0.) then
-      interpolate_for_nondim_position = 1.
-    else ! dRhoPos = dRhoNeg = 0
+  if ((Ppos > Pneg) .and. (dRhoPos - dRhoNeg >= 0. )) then
+    if ( dRhoPos - dRhoNeg > 0. ) then
+      interpolate_for_nondim_position = min( 1., max( 0., -dRhoNeg / ( dRhoPos - dRhoNeg ) ) )
+    elseif (dRhoPos - dRhoNeg == 0) then
+      if (dRhoNeg > 0.) then
+        interpolate_for_nondim_position = 0.
+      elseif (dRhoNeg < 0.) then
+        interpolate_for_nondim_position = 1.
+      else ! dRhoPos = dRhoNeg = 0
+        interpolate_for_nondim_position = 0.5
+      endif
+    else ! dRhoPos - dRhoNeg < 0
       interpolate_for_nondim_position = 0.5
     endif
-  else ! dRhoPos - dRhoNeg < 0
+  elseif (Ppos == Pneg) then ! Handle vanished or inverted layers
     interpolate_for_nondim_position = 0.5
+  else ! ((Ppos < Pneg) .or. (dRhoNeg > dRhoPos) )
+    ! Error handling for problematic cases.  It is expected that this should never occur.
+    write(mesg,*) 'dRhoNeg, Pneg, dRhoPos, Ppos', dRhoNeg, Pneg, dRhoPos, Ppos
+    call MOM_error(WARNING, 'interpolate_for_nondim_position: '//trim(mesg))
+    !  write(stderr,*) trim(mesg)
+    if ((Ppos < Pneg) .and. (dRhoNeg > dRhoPos)) then
+      mesg = '(Ppos < Pneg) and (dRhoNeg > dRhoPos)'
+    elseif (Ppos < Pneg) then
+      mesg = 'Ppos < Pneg'
+    elseif (dRhoNeg > dRhoPos) then
+      mesg = trim(mesg)//'; dRhoNeg > dRhoPos'
+    else  ! This should never happen.
+      mesg = 'Unexpected failure.'
+    endif
+    call MOM_error(FATAL, 'interpolate_for_nondim_position: '//trim(mesg))
   endif
-  if ( interpolate_for_nondim_position < 0. ) &
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! Pint < Pneg')
-  if ( interpolate_for_nondim_position > 1. ) &
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! Pint > Ppos')
+
 end function interpolate_for_nondim_position
 
 !> Higher order version of find_neutral_surface_positions. Returns positions within left/right columns
