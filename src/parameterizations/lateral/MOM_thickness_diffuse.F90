@@ -181,7 +181,7 @@ subroutine thickness_diffuse(h, uhtr, vhtr, tv, dt, G, GV, US, MEKE, VarMix, CDp
   real :: KH_v_lay(SZI_(G),SZJ_(G)) ! Diagnostic of isopycnal height diffusivities at v-points averaged
                                     ! to layer centers [L2 T-1 ~> m2 s-1]
   logical :: use_VarMix, Resoln_scaled, Depth_scaled, use_stored_slopes, khth_use_ebt_struct, use_Visbeck
-  logical :: use_QG_Leith
+  logical :: use_QG_Leith, use_gradient_model
   integer :: i, j, k, is, ie, js, je, nz
 
   if (.not. CS%initialized) call MOM_error(FATAL, "MOM_thickness_diffuse: "//&
@@ -210,7 +210,7 @@ subroutine thickness_diffuse(h, uhtr, vhtr, tv, dt, G, GV, US, MEKE, VarMix, CDp
     khth_use_ebt_struct = VarMix%khth_use_ebt_struct
     use_Visbeck = VarMix%use_Visbeck
     use_QG_Leith = VarMix%use_QG_Leith_GM
-!>    use_gradient_model = VarMix%use_gradient_model
+    use_gradient_model = VarMix%use_gradient_model
     if (allocated(VarMix%cg1)) cg1 => VarMix%cg1
   else
     cg1 => null()
@@ -322,7 +322,8 @@ subroutine thickness_diffuse(h, uhtr, vhtr, tv, dt, G, GV, US, MEKE, VarMix, CDp
   endif
 
   if (use_VarMix) then
-    if (CS%Grad_L_Scale > 0.0) then
+    if (use_gradient_model) then
+!!    if (CS%Grad_L_Scale > 0.0) then
       !$OMP do
       do k=1,nz ; do j=js,je ; do I=is-1,ie
         KH_u(I,j,k) = 1.0*CS%Grad_L_Scale*VarMix%L2grad_u(I,j)*VarMix%UH_grad(I,j,k)
@@ -429,7 +430,8 @@ subroutine thickness_diffuse(h, uhtr, vhtr, tv, dt, G, GV, US, MEKE, VarMix, CDp
   endif
 
   if (use_VarMix) then
-    if (CS%Grad_L_Scale > 0.0) then  !< Gradient model
+    if (use_gradient_model) then
+!!    if (CS%Grad_L_Scale > 0.0) then  !< Gradient model
       !$OMP do
       do k=1,nz ; do J=js-1,je ; do i=is,ie
         KH_v(i,J,k) = 1.0*CS%Grad_L_Scale*VarMix%L2grad_v(i,J)*VarMix%VH_grad(i,J,k)
