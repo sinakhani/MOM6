@@ -1500,18 +1500,16 @@ subroutine VarMix_init(Time, G, GV, US, param_file, diag, CS)
     allocate(CS%VH_grad(isd:ied,JsdB:JedB,GV%ke), source=0.0) 
     allocate(CS%L2grad_u(IsdB:IedB,jsd:jed), source=0.0)
     allocate(CS%L2grad_v(isd:ied,JsdB:JedB), source=0.0)
+    CS%id_UH_grad = register_diag_field('ocean_model', 'UH_grad', diag%axesCu1, Time, &
+     'Inverse gradient eddy time-scale, U_xH_x+U_yH_y, at u-points', 's^-1')   
+    CS%id_VH_grad = register_diag_field('ocean_model', 'VH_grad', diag%axesCv1, Time, &
+     'Inverse gradient eddy time-scale, V_xH_x+V_yH_y, at v-points', 's^-1')
+    CS%id_L2grad_u = register_diag_field('ocean_model', 'L2grad_u', diag%axesCu1, Time, &
+     'Length scale squared for gradient coefficient, at u-points', 'm^2')
+    CS%id_L2grad_v = register_diag_field('ocean_model', 'L2grad_v', diag%axesCv1, Time, &
+     'Length scale squared for gradient coefficient, at v-points', 'm^2') 
   endif
  
-  CS%id_UH_grad = register_diag_field('ocean_model', 'UH_grad', diag%axesCu1, Time, &
-     'Inverse gradient eddy time-scale, U_xH_x+U_yH_y, at u-points', 's^-1')
-  CS%id_VH_grad = register_diag_field('ocean_model', 'VH_grad', diag%axesCv1, Time, &
-     'Inverse gradient eddy time-scale, V_xH_x+V_yH_y, at v-points', 's^-1') 
-  CS%id_L2grad_u = register_diag_field('ocean_model', 'L2grad_u', diag%axesCu1, Time, &
-     'Length scale squared for gradient coefficient, at u-points', 'm^2')
-  CS%id_L2grad_v = register_diag_field('ocean_model', 'L2grad_v', diag%axesCv1, Time, &
-     'Length scale squared for gradient coefficient, at v-points', 'm^2') 
-
-
   if (CS%calculate_Eady_growth_rate .and. CS%use_stored_slopes) then
     CS%id_N2_u = register_diag_field('ocean_model', 'N2_u', diag%axesCui, Time, &
          'Square of Brunt-Vaisala frequency, N^2, at u-points, as used in Visbeck et al.', &
